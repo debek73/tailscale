@@ -46,6 +46,7 @@ jobs:
         with:
           path: |
             C:\Program Files (x86)\NinjaTrader 8
+            C:\Program Files\NinjaTrader 8
             C:\Users\runneradmin\Documents\NinjaTrader 8
           key: nt8-snapshot-${{ github.run_id }}
           restore-keys: |
@@ -53,8 +54,10 @@ jobs:
 
       - name: 2. Snapshot status
         run: |
-          if (Test-Path 'C:\Program Files (x86)\NinjaTrader 8\bin\NinjaTrader.exe') {
-            Write-Host "OK: NinjaTrader and its data were restored from the last session." -ForegroundColor Green
+          if (Test-Path 'C:\Program Files\NinjaTrader 8\bin\NinjaTrader.exe') {
+            Write-Host "OK: NinjaTrader (64-bit) and its data were restored from the last session." -ForegroundColor Green
+          } elseif (Test-Path 'C:\Program Files (x86)\NinjaTrader 8\bin\NinjaTrader.exe') {
+            Write-Host "OK: NinjaTrader (32-bit) and its data were restored from the last session." -ForegroundColor Green
           } else {
             Write-Host "No snapshot yet. Connect via RDP and install NinjaTrader + log in to your broker; it will be auto-saved at the end of this session." -ForegroundColor Yellow
           }
@@ -75,6 +78,25 @@ jobs:
             Set-ItemProperty -Path $k -Name 'SystemDefaultTlsVersions' -Value 1 -Type DWord
           }
           Write-Host "TLS fix applied: TLS 1.3 client disabled, TLS 1.2 enabled."
+          # Rithmic's R|API only negotiates a narrow set of legacy TLS cipher suites.
+          # Put those suites at the front of the machine-wide order (Server 2025 default
+          # order leads CS prunes / "no common algorithm" panics inside R|API).
+          $rithmicOrder = @(
+            'TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384'
+            'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256'
+            'TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384'
+            'TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256'
+            'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384'
+            'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256'
+            'TLS_RSA_WITH_AES_256_CBC_SHA256'
+            'TLS_RSA_WITH_AES_128_CBC_SHA256'
+            'TLS_RSA_WITH_AES_256_CBC_SHA'
+            'TLS_RSA_WITH_AES_128_CBC_SHA'
+          )
+          $all = (Get-TlsCipherSuite | ForEach-Object { $_.Name })
+          $newOrder = @($rithmicOrder | Where-Object { $all -contains $_ }) + @($all | Where-Object { $rithmicOrder -notcontains $_ })
+          Set-TlsCipherSuite -Order $newOrder
+          Write-Host "Cipher suite order updated; Rithmic-compatible suites moved to front."
 
       - name: 4. Enable Remote Desktop, Firewall & Admin Password
         run: |
