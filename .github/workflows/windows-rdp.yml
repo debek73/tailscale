@@ -203,6 +203,8 @@ jobs:
           Write-Host "==================================================" -ForegroundColor Green
 
       - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $uri = "https://api.github.com/repos/$Env:GITHUB_REPOSITORY/contents/.stop-signal"
           for ($i = 1; $i -le 320; $i++) {
