@@ -37,8 +37,9 @@ jobs:
     # کمی زودتر از سقف ۳۶۰ دقیقه تمام می‌کنیم تا بکاپِ پایانی با خیال راحت ذخیره شود
     timeout-minutes: 359
     env:
-      # رمز عبور را فقط اینجا عوض کنید
-      RDP_PASSWORD: "P@ssw0rd1qazXSW@#"
+      # Password lives in repo secrets now (Settings > Secrets and variables > Actions > RDP_PASSWORD).
+      # Secrets are never visible in public logs and cannot be read via the API.
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
       - name: 1. Restore NinjaTrader (program + data) from last session
@@ -137,9 +138,13 @@ jobs:
       - name: 4. Enable Remote Desktop, Firewall & Admin Password
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
           net user runneradmin "$Env:RDP_PASSWORD"
+          # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10) - never from the internet.
+          # The built-in "Remote Desktop" firewall group stays disabled (default-deny covers everything else).
+          New-NetFirewallRule -DisplayName "RDP via Tailscale TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
+          New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
+          Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
 
       - name: 5. Install & Connect Tailscale
         env:
@@ -156,10 +161,12 @@ jobs:
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
-          Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
+          Write-Host "  Device name  : gh-rdp-${{ github.run_number }}  <- find this device" -ForegroundColor Yellow
+          Write-Host "                 in YOUR Tailscale app to get its IP." -ForegroundColor Yellow
           Write-Host "  Username     : runneradmin" -ForegroundColor Yellow
-          Write-Host "  Password     : $Env:RDP_PASSWORD" -ForegroundColor Yellow
-          Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
+          Write-Host "  Password     : stored in repo secret RDP_PASSWORD" -ForegroundColor Yellow
+          Write-Host "                 (never printed in logs)." -ForegroundColor Yellow
+          Write-Host "  >> Open mstsc and connect to the device IP." -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
       - name: 6. Keep alive ~5h20m, then close NinjaTrader safely for backup
