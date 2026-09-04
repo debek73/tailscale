@@ -107,6 +107,32 @@ jobs:
           Set-ItemProperty -Path $pk -Name 'Functions' -Value $newOrder -Type MultiString
           Write-Host "Cipher suite order policy written:" -ForegroundColor Green
           $newOrder | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+          # Rithmic's market-data gateways (R|API OMNE) still negotiate TLS 1.0/1.1
+          # with legacy ciphers (3DES/RC4). Server 2025 ships these disabled, which
+          # leaves the connection stuck in "Connecting". Enable client-side legacy TLS:
+          foreach ($v in 'TLS 1.0','TLS 1.1') {
+            $p = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$v\Client"
+            New-Item -Path $p -Force | Out-Null
+            Set-ItemProperty -Path $p -Name 'Enabled' -Value 1 -Type DWord
+            Set-ItemProperty -Path $p -Name 'DisabledByDefault' -Value 0 -Type DWord
+          }
+          foreach ($s in 'TLS_RSA_WITH_3DES_EDE_CBC_SHA','TLS_RSA_WITH_RC4_128_SHA','TLS_RSA_WITH_RC4_128_MD5','TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA','TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA') {
+            try { Enable-TlsCipherSuite -Name $s -ErrorAction Stop } catch { }
+          }
+          $sch = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL'
+          foreach ($c in 'Triple DES 168','Triple DES 112','RC4 128/128','RC2 128/128','DES 56/56') {
+            $p = "$sch\Ciphers\$c"; New-Item -Path $p -Force | Out-Null
+            Set-ItemProperty -Path $p -Name 'Enabled' -Value 0xffffffff -Type DWord
+          }
+          foreach ($h in 'SHA1','MD5') {
+            $p = "$sch\Hashes\$h"; New-Item -Path $p -Force | Out-Null
+            Set-ItemProperty -Path $p -Name 'Enabled' -Value 0xffffffff -Type DWord
+          }
+          foreach ($k in 'PKCS','Diffie Hellman','ECDH') {
+            $p = "$sch\KeyExchangeAlgorithms\$k"; New-Item -Path $p -Force | Out-Null
+            Set-ItemProperty -Path $p -Name 'Enabled' -Value 0xffffffff -Type DWord
+          }
+          Write-Host "Legacy TLS 1.0/1.1 + 3DES/RC4 enabled for Rithmic market-data gateways."
 
       - name: 4. Enable Remote Desktop, Firewall & Admin Password
         run: |
