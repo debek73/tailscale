@@ -21,9 +21,10 @@ name: Windows Cloud RDP - NinjaTrader (Persistent)
 
 on:
   workflow_dispatch:
-  # برای زنجیره‌ی خودکار (اجرای مجدد هر ۶ ساعت)، خطوط زیر را از کامنت خارج کنید:
-  # schedule:
-  #   - cron: '55 */6 * * *'
+  # Auto-restart the session every ~6 hours (chain of sessions).
+  # Remove/comment this block to go back to manual runs only.
+  schedule:
+    - cron: '55 */6 * * *'
 
 # اگر یک سشن در جریان باشد، رانِ جدید در صف می‌ماند و بعد از پایان آن شروع می‌شود.
 # (دو سشن همزمان = دو ماشین مختلف = تداخل بکاپ و لاگین بروکر)
@@ -139,7 +140,14 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
-          net user runneradmin "$Env:RDP_PASSWORD"
+          if ([string]::IsNullOrEmpty($Env:RDP_PASSWORD)) {
+            throw "Secret RDP_PASSWORD is not set. Add it under repo Settings > Secrets and variables > Actions."
+          }
+          # Unique password per session = base secret + run number. Never stored or printed anywhere.
+          # The run number is visible in the Tailscale device name (gh-rdp-<N> -> N).
+          $sessionPw = "$Env:RDP_PASSWORD-${{ github.run_number }}"
+          net user runneradmin $sessionPw
+          Write-Host "runneradmin password set (unique for this session, not printed)." -ForegroundColor Green
           # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10) - never from the internet.
           # The built-in "Remote Desktop" firewall group stays disabled (default-deny covers everything else).
           New-NetFirewallRule -DisplayName "RDP via Tailscale TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
