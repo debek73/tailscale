@@ -1,21 +1,20 @@
-# Windows Cloud RDP - NinjaTrader (Persistent Snapshot)
+# Windows Cloud RDP - Full Persistent Server Snapshot
 #
 # نحوه‌ی کار:
-#   هر بار که این ورک‌فلو اجرا می‌شود، یک ماشین مجازی «کاملاً خالی» ساخته می‌شود.
-#   این ورک‌فلو در شروعِ اجرا، نصب نینجاتریدر و کل پوشه‌ی دیتای آن را از
-#   کش (Cache) گیت‌هاب برمی‌گرداند، و در پایانِ سشن دوباره ذخیره می‌کند.
-#   بنابراین بعد از هر بار اجرای مجدد، نینجاتریدر و دیتای شما سر جایش است.
+#   هر سشن در پایان، یک "اسنپ‌شات کامل" از سرور می‌گیرد و در کش گیت‌هاب ذخیره می‌کند؛
+#   سشن بعدی موقع بالا آمدن، همه‌چیز را برمی‌گرداند:
+#     - تمام فایل‌های پروفایل (دسکتاپ، Documents، Downloads، AppData و ...)
+#     - تنظیمات رجیستری کاربر و نرم‌افزارها (تم، Explorer، ترجیحات برنامه‌ها و ...)
+#     - برنامه‌های نصب‌شده داخل مسیرهای بکاپ
+#   قاعده: هر برنامه‌ای که نصب می‌کنید را در C:\Apps نصب کنید تا داخل بکاپ بیفتد
+#   (نینجاتریدر خودش در مسیرهای استاندارد بکاپ می‌شود).
 #
-#   ذخیره‌ی بکاپ به‌صورت خودکار در "post step" اکشن cache انجام می‌شود؛
-#   یعنی بعد از تمام شدن مرحله‌ی ۵، خودِ اکشن وضعیت فعلی دو پوشه را آرشیو می‌کند.
-#
-# محدودیت‌ها (حتماً بخوانید):
-#   - سقف گیت‌هاب برای هر جاب ۳۶۰ دقیقه (۶ ساعت) است. لوپ ۲۸۸۰ دقیقه‌ای فایل قبلی
-#     هیچ‌وقت کامل نمی‌شد؛ جاب در دقیقه ۳۶۰ کشته می‌شد.
-#   - حجم کل کش هر ریپو ۱۰ گیگابایت است و اِنتری‌های ۷ روز استفاده‌نشده حذف می‌شوند.
-#     اگر دیتای تیک/هیستوریکال شما خیلی بزرگ است، این روش کافی نیست (بخش راهنمای پایین را ببینید).
-#   - هر سشن ماشین جدید است: اتصال بروکر باید دوباره Login شود و ممکن است
-#     نینجاتریدر لایسنس رایگان را برای ماشین جدید دوباره Activate بخواهد.
+# محدودیت‌ها:
+#   - فایل‌های سیستمی ویندوز (C:\Windows) بکاپ نمی‌شوند - نیازی هم نیست، هر سشن یکسان نصب می‌شوند.
+#   - سقف کل کش گیت‌هاب ۱۰ گیگابایت است؛ فایل‌های خیلی حجیم نگه ندارید.
+#   - کش‌های ۷ روز استفاده‌نشده حذف می‌شوند؛ حداقل هفته‌ای یک‌بار سشن بگیرید.
+#   - ذخیره‌ی بکاپ فقط در پایانِ سالمِ سشن انجام می‌شود (پایان طبیعی یا .stop-signal).
+#     Cancel یا ری‌استارت = از دست رفتن تغییرات همان سشن!
 
 name: Windows Cloud RDP - NinjaTrader (Persistent)
 
@@ -26,8 +25,7 @@ on:
   schedule:
     - cron: '55 */6 * * *'
 
-# اگر یک سشن در جریان باشد، رانِ جدید در صف می‌ماند و بعد از پایان آن شروع می‌شود.
-# (دو سشن همزمان = دو ماشین مختلف = تداخل بکاپ و لاگین بروکر)
+# اگر یک سشن در جریان باشد، رانِ جدید در صف می‌ماند تا بعد از پایان آن شروع شود.
 concurrency:
   group: nt8-rdp
   cancel-in-progress: false
@@ -38,30 +36,66 @@ jobs:
     # کمی زودتر از سقف ۳۶۰ دقیقه تمام می‌کنیم تا بکاپِ پایانی با خیال راحت ذخیره شود
     timeout-minutes: 359
     env:
-      # Password lives in repo secrets now (Settings > Secrets and variables > Actions > RDP_PASSWORD).
+      # Password lives in repo secrets (Settings > Secrets and variables > Actions > RDP_PASSWORD).
       # Secrets are never visible in public logs and cannot be read via the API.
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      - name: 1. Restore NinjaTrader (program + data) from last session
+      # Legacy cache: NT folders saved by older workflow versions (continuity for old snapshots)
+      - name: 1a. Restore NinjaTrader folders (legacy snapshot)
         uses: actions/cache@v4
         with:
           path: |
-            C:\Program Files (x86)\NinjaTrader 8
             C:\Program Files\NinjaTrader 8
+            C:\Program Files (x86)\NinjaTrader 8
             C:\Users\runneradmin\Documents\NinjaTrader 8
           key: nt8-snapshot-${{ github.run_id }}
           restore-keys: |
             nt8-snapshot-
 
-      - name: 2. Snapshot status
+      # Full-server snapshot staging area
+      - name: 1b. Restore full server snapshot
+        uses: actions/cache@v4
+        with:
+          path: C:\persist
+          key: server-snapshot-${{ github.run_id }}
+          restore-keys: |
+            server-snapshot-
+
+      - name: 2. Restore files & registry from snapshot
         run: |
-          if (Test-Path 'C:\Program Files\NinjaTrader 8\bin\NinjaTrader.exe') {
-            Write-Host "OK: NinjaTrader (64-bit) and its data were restored from the last session." -ForegroundColor Green
-          } elseif (Test-Path 'C:\Program Files (x86)\NinjaTrader 8\bin\NinjaTrader.exe') {
-            Write-Host "OK: NinjaTrader (32-bit) and its data were restored from the last session." -ForegroundColor Green
+          if (Test-Path 'C:\persist\profile') {
+            Write-Host "Snapshot found - restoring full server state..." -ForegroundColor Green
+            robocopy "C:\persist\profile" "C:\Users\runneradmin" /E /COPY:DAT /DCOPY:T /R:1 /W:1 /NFL /NDL /NJH | Out-Null
+            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+            foreach ($root in 'C:\Program Files','C:\Program Files (x86)') {
+              $stage = 'C:\persist\ProgramFiles'
+              if ($root -like '*x86*') { $stage = 'C:\persist\ProgramFilesX86' }
+              if (Test-Path $stage) {
+                Get-ChildItem $stage -Directory | ForEach-Object {
+                  $dest = Join-Path $root $_.Name
+                  robocopy $_.FullName $dest /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NJH | Out-Null
+                  if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+                }
+              }
+            }
+            if (Test-Path 'C:\persist\Apps') {
+              robocopy 'C:\persist\Apps' 'C:\Apps' /E /COPY:DAT /DCOPY:T /R:1 /W:1 /NFL /NDL /NJH | Out-Null
+              if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+            }
+            if (Test-Path 'C:\persist\registry\HKCU.reg') {
+              reg import 'C:\persist\registry\HKCU.reg' 2>&1 | Out-Null
+              Write-Host "HKCU (user settings) imported."
+            }
+            if (Test-Path 'C:\persist\registry\HKLM-SOFTWARE.reg') {
+              reg import 'C:\persist\registry\HKLM-SOFTWARE.reg' 2>&1 | Out-Null
+              Write-Host "HKLM\SOFTWARE (app settings) imported."
+            }
+            if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
+            Write-Host "Restore complete." -ForegroundColor Green
           } else {
-            Write-Host "No snapshot yet. Connect via RDP and install NinjaTrader + log in to your broker; it will be auto-saved at the end of this session." -ForegroundColor Yellow
+            Write-Host "No full snapshot yet. NinjaTrader folders (if any) were restored from the legacy cache." -ForegroundColor Yellow
+            Write-Host "Everything from THIS session will be saved at session end." -ForegroundColor Yellow
           }
 
       - name: 3. Fix Windows TLS for Rithmic (Rithmic only speaks TLS 1.2)
@@ -74,15 +108,13 @@ jobs:
           New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Force | Out-Null
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Name 'Enabled' -Value 1 -Type DWord
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Name 'DisabledByDefault' -Value 0 -Type DWord
-          # .NET strong crypto (NinjaTrader is a 32-bit .NET app -> both registry views)
+          # .NET strong crypto (NinjaTrader is a .NET app -> both registry views)
           foreach ($k in 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319','HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319') {
             Set-ItemProperty -Path $k -Name 'SchUseStrongCrypto' -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name 'SystemDefaultTlsVersions' -Value 1 -Type DWord
           }
           Write-Host "TLS fix applied: TLS 1.3 client disabled, TLS 1.2 enabled."
           # Rithmic's R|API only negotiates a narrow set of legacy TLS cipher suites.
-          # Put those suites at the front of the machine-wide order (Server 2025 default
-          # order leads CS prunes / "no common algorithm" panics inside R|API).
           $rithmicOrder = @(
             'TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384'
             'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256'
@@ -95,15 +127,13 @@ jobs:
             'TLS_RSA_WITH_AES_256_CBC_SHA'
             'TLS_RSA_WITH_AES_128_CBC_SHA'
           )
-          # Server 2025 ships WITHOUT any CBC suites enabled at all; Rithmic's gateways
-          # are CBC-only. Enable the legacy suites first, then reorder.
+          # Server 2025 ships WITHOUT any CBC suites enabled at all; enable them first.
           foreach ($s in $rithmicOrder) {
             try { Enable-TlsCipherSuite -Name $s -ErrorAction Stop } catch { }
           }
           $all = (Get-TlsCipherSuite | ForEach-Object { $_.Name })
           $newOrder = @($rithmicOrder | Where-Object { $all -contains $_ }) + @($all | Where-Object { $rithmicOrder -notcontains $_ })
-          # Windows has no Set-TlsCipherSuite; the machine-wide order is set via the
-          # Group-Policy registry value (REG_MULTI_SZ "Functions") that Schannel reads.
+          # Machine-wide order is set via the Group-Policy registry value (REG_MULTI_SZ "Functions").
           $pk = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
           New-Item -Path $pk -Force | Out-Null
           Set-ItemProperty -Path $pk -Name 'Functions' -Value $newOrder -Type MultiString
@@ -136,7 +166,7 @@ jobs:
           }
           Write-Host "Legacy TLS 1.0/1.1 + 3DES/RC4 enabled for Rithmic market-data gateways."
 
-      - name: 4. Enable Remote Desktop, Firewall & Admin Password
+      - name: 4. Enable Remote Desktop, Firewall & session password
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
@@ -149,7 +179,6 @@ jobs:
           net user runneradmin $sessionPw
           Write-Host "runneradmin password set (unique for this session, not printed)." -ForegroundColor Green
           # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10) - never from the internet.
-          # The built-in "Remote Desktop" firewall group stays disabled (default-deny covers everything else).
           New-NetFirewallRule -DisplayName "RDP via Tailscale TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
@@ -161,25 +190,19 @@ jobs:
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           Start-Sleep -Seconds 5
-          # hostname یکتا در هر اجرا؛ دستگاه‌های قدیمی در پنل Tailscale جمع می‌شوند،
-          # پس بهتر است AuthKey را از نوع Ephemeral بسازید
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="gh-rdp-${{ github.run_number }}"
           Start-Sleep -Seconds 8
-          $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
           Write-Host "  Device name  : gh-rdp-${{ github.run_number }}  <- find this device" -ForegroundColor Yellow
           Write-Host "                 in YOUR Tailscale app to get its IP." -ForegroundColor Yellow
           Write-Host "  Username     : runneradmin" -ForegroundColor Yellow
-          Write-Host "  Password     : stored in repo secret RDP_PASSWORD" -ForegroundColor Yellow
-          Write-Host "                 (never printed in logs)." -ForegroundColor Yellow
+          Write-Host "  Password     : <RDP_PASSWORD secret>-<run number N>" -ForegroundColor Yellow
           Write-Host "  >> Open mstsc and connect to the device IP." -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: 6. Keep alive ~5h20m, then close NinjaTrader safely for backup
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
         run: |
           $uri = "https://api.github.com/repos/$Env:GITHUB_REPOSITORY/contents/.stop-signal"
           for ($i = 1; $i -le 320; $i++) {
@@ -192,32 +215,44 @@ jobs:
             Start-Sleep -Seconds 60
             Write-Host "[$i/320] Server running... ($([math]::Round($i/60,1))h)"
           }
-          Write-Host "Session over. Closing NinjaTrader so its database files are unlocked..."
+          Write-Host "Session over. Closing apps so files unlock..."
           Get-Process | Where-Object { $_.ProcessName -like "NinjaTrader*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 20
-          Write-Host "Done. Cache post-step will now save the NinjaTrader snapshot automatically."
+          # ---------- Stage FULL server snapshot ----------
+          New-Item -ItemType Directory -Force -Path 'C:\persist\registry' | Out-Null
+          reg export HKCU 'C:\persist\registry\HKCU.reg' /y | Out-Null
+          reg export 'HKLM\SOFTWARE' 'C:\persist\registry\HKLM-SOFTWARE.reg' /y | Out-Null
+          robocopy "C:\Users\runneradmin" "C:\persist\profile" /MIR /COPY:DAT /DCOPY:T /R:0 /W:0 /NFL /NDL /NJH `
+            /XF "NTUSER.DAT*" `
+            /XD "$env:USERPROFILE\AppData\Local\Temp" "$env:USERPROFILE\AppData\Local\Microsoft\Windows\INetCache" | Out-Null
+          if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+          if (Test-Path 'C:\Program Files\NinjaTrader 8') {
+            robocopy "C:\Program Files\NinjaTrader 8" "C:\persist\ProgramFiles\NinjaTrader 8" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
+            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+          }
+          if (Test-Path 'C:\Program Files (x86)\NinjaTrader 8') {
+            robocopy "C:\Program Files (x86)\NinjaTrader 8" "C:\persist\ProgramFilesX86\NinjaTrader 8" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
+            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+          }
+          if (Test-Path 'C:\Apps') {
+            robocopy "C:\Apps" "C:\persist\Apps" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
+            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+          }
+          Write-Host "Full snapshot staged. Cache post-step will save it automatically." -ForegroundColor Green
 
 # ================== راهنما / نکات مهم ==================
 #
-# 1) ورود به RDP همیشه با کاربر runneradmin انجام شود (نه کاربر دیگر)،
-#    چون مسیر بکاپ به پروفایل همین کاربر گره خورده است.
+# 1) ورود به RDP همیشه با کاربر runneradmin انجام شود.
+#    رمز هر سشن = مقدار Secret رمز پایه + "-" + شماره ران
+#    (شماره ران = عدد آخر نام دستگاه gh-rdp-<N> در اپ Tailscale شما).
 #
-# 2) سشن ۶ ساعته است و بعدش بسته می‌شود؛ برای سشن بعدی فقط دوباره Workflow را Run کنید.
-#    بستن پنجره‌ی RDP مشکلی ندارد؛ سرور تا پایان سشن روشن می‌ماند.
-#    برای پایان زودهنگام: در ریپو فایلی به نام .stop-signal بسازید (بعد از پایان حذفش کنید).
-#    دقت: Cancel مستقیمِ جاب = بکاپ ذخیره نمی‌شود و تغییرات آن سشن از دست می‌رود.
+# 2) پایان سشن: فایل .stop-signal در ریپو بسازید (یا بگویید «تمام شد»).
+#    Cancel مستقیمِ جاب = بکاپ ذخیره نمی‌شود. ری‌استارت داخل سرور هم هرگز!
 #
-# 3) IP جدید هر بار در لاگ مرحله 5 نوشته می‌شود، یا می‌توانید در پنل Tailscale
-#    دستگاه با hostname جدید (gh-rdp-...) را پیدا کنید.
+# 3) هر برنامه‌ای که نصب می‌کنید را در C:\Apps نصب کنید تا داخل بکاپ بیفتد.
+#    مسیر نصب دیگری لازم داشتید، بگویید تا به لیست بکاپ اضافه شود.
 #
-# 4) هزینه/کووتا: ریپوی خصوصی فقط ۲۰۰۰ دقیقه در ماه رایگان دارد (≈ ۵ سشن ۶ ساعته).
-#    ریپوی عمومی نامحدود است ولی لاگ‌ها (شامل رمز عبور) برای همه قابل دیدن است
-#    و استفاده‌ی غیرمرتبط با توسعه‌ی نرم‌افزار از رانرهای گیت‌هاب، طبق قوانین گیت‌هاب
-#    می‌تواند منجر به تعلیق اکانت شود.
+# 4) سقف کش ۱۰ گیگابایت است؛ کش ۷ روز بی‌استفاده حذف می‌شود.
 #
-# 5) اگر دیتای نینجاتریدر (تیک‌ها/دیتای هیستوریکال) به ۱۰ گیگ نزدیک شد، کش جواب نمی‌دهد؛
-#    باید بکاپ را به جای دیگری ببرید (مثلاً Release asset با PAT، یا Google Drive)
-#    یا Download Data را در نینجاتریدر محدود کنید.
-#
-# 6) برای کار واقعاً ۲۴/۷ (مثلاً استراتژی اتومات بدون قطعی)، این ساختار مناسب نیست؛
-#    یک VPS ویندوزی ارزان یا سیستم شخصی خودتان + Tailscale راه درست است.
+# 5) هزینه: ریپوی عمومی دقیقه نامحدود رایگان دارد؛ لاگ‌ها عمومی‌اند ولی
+#    دیگر هیچ رمز یا IP قابل‌استفاده‌ای در آن‌ها نیست.
