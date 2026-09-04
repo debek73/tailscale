@@ -173,10 +173,10 @@ jobs:
           if ([string]::IsNullOrEmpty($Env:RDP_PASSWORD)) {
             throw "Secret RDP_PASSWORD is not set. Add it under repo Settings > Secrets and variables > Actions."
           }
-          # Unique password per session = base secret + run number. Never stored or printed anywhere.
-          # The run number is visible in the Tailscale device name (gh-rdp-<N> -> N).
-          $sessionPw = "$Env:RDP_PASSWORD-${{ github.run_number }}"
-          net user runneradmin $sessionPw
+          # Fixed password from repo secret (never printed anywhere).
+          # Port 3389 is only reachable inside the user's own Tailscale network,
+          # so a fixed password is acceptable and enables saved-credential RDP shortcuts.
+          net user runneradmin "$Env:RDP_PASSWORD"
           Write-Host "runneradmin password set (unique for this session, not printed)." -ForegroundColor Green
           # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10) - never from the internet.
           New-NetFirewallRule -DisplayName "RDP via Tailscale TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
@@ -190,15 +190,15 @@ jobs:
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="gh-rdp-${{ github.run_number }}"
           Start-Sleep -Seconds 8
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
-          Write-Host "  Device name  : gh-rdp-${{ github.run_number }}  <- find this device" -ForegroundColor Yellow
-          Write-Host "                 in YOUR Tailscale app to get its IP." -ForegroundColor Yellow
+          Write-Host "  Device name  : nt-server  <- fixed address:" -ForegroundColor Yellow
+          Write-Host "                 nt-server.<tailnet>.ts.net (MagicDNS)" -ForegroundColor Yellow
           Write-Host "  Username     : runneradmin" -ForegroundColor Yellow
-          Write-Host "  Password     : <RDP_PASSWORD secret>-<run number N>" -ForegroundColor Yellow
+          Write-Host "  Password     : stored in repo secret RDP_PASSWORD (fixed)" -ForegroundColor Yellow
           Write-Host "  >> Open mstsc and connect to the device IP." -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
