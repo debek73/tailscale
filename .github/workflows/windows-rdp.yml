@@ -1,56 +1,150 @@
-name: Windows Cloud RDP
+# Windows Cloud RDP - NinjaTrader (Persistent Snapshot)
+#
+# نحوه‌ی کار:
+#   هر بار که این ورک‌فلو اجرا می‌شود، یک ماشین مجازی «کاملاً خالی» ساخته می‌شود.
+#   این ورک‌فلو در شروعِ اجرا، نصب نینجاتریدر و کل پوشه‌ی دیتای آن را از
+#   کش (Cache) گیت‌هاب برمی‌گرداند، و در پایانِ سشن دوباره ذخیره می‌کند.
+#   بنابراین بعد از هر بار اجرای مجدد، نینجاتریدر و دیتای شما سر جایش است.
+#
+#   ذخیره‌ی بکاپ به‌صورت خودکار در "post step" اکشن cache انجام می‌شود؛
+#   یعنی بعد از تمام شدن مرحله‌ی ۵، خودِ اکشن وضعیت فعلی دو پوشه را آرشیو می‌کند.
+#
+# محدودیت‌ها (حتماً بخوانید):
+#   - سقف گیت‌هاب برای هر جاب ۳۶۰ دقیقه (۶ ساعت) است. لوپ ۲۸۸۰ دقیقه‌ای فایل قبلی
+#     هیچ‌وقت کامل نمی‌شد؛ جاب در دقیقه ۳۶۰ کشته می‌شد.
+#   - حجم کل کش هر ریپو ۱۰ گیگابایت است و اِنتری‌های ۷ روز استفاده‌نشده حذف می‌شوند.
+#     اگر دیتای تیک/هیستوریکال شما خیلی بزرگ است، این روش کافی نیست (بخش راهنمای پایین را ببینید).
+#   - هر سشن ماشین جدید است: اتصال بروکر باید دوباره Login شود و ممکن است
+#     نینجاتریدر لایسنس رایگان را برای ماشین جدید دوباره Activate بخواهد.
+
+name: Windows Cloud RDP - NinjaTrader (Persistent)
 
 on:
   workflow_dispatch:
+  # برای زنجیره‌ی خودکار (اجرای مجدد هر ۶ ساعت)، خطوط زیر را از کامنت خارج کنید:
+  # schedule:
+  #   - cron: '55 */6 * * *'
+
+# اگر یک سشن در جریان باشد، رانِ جدید در صف می‌ماند و بعد از پایان آن شروع می‌شود.
+# (دو سشن همزمان = دو ماشین مختلف = تداخل بکاپ و لاگین بروکر)
+concurrency:
+  group: nt8-rdp
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
+    # کمی زودتر از سقف ۳۶۰ دقیقه تمام می‌کنیم تا بکاپِ پایانی با خیال راحت ذخیره شود
+    timeout-minutes: 359
+    env:
+      # رمز عبور را فقط اینجا عوض کنید
+      RDP_PASSWORD: "P@ssw0rd1qazXSW@#"
 
     steps:
-      - name: 1. Enable Remote Desktop & Firewall
+      - name: 1. Restore NinjaTrader (program + data) from last session
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files (x86)\NinjaTrader 8
+            C:\Users\runneradmin\Documents\NinjaTrader 8
+          key: nt8-snapshot-${{ github.run_id }}
+          restore-keys: |
+            nt8-snapshot-
+
+      - name: 2. Snapshot status
+        run: |
+          if (Test-Path 'C:\Program Files (x86)\NinjaTrader 8\bin\NinjaTrader.exe') {
+            Write-Host "OK: NinjaTrader and its data were restored from the last session." -ForegroundColor Green
+          } else {
+            Write-Host "No snapshot yet. Connect via RDP and install NinjaTrader + log in to your broker; it will be auto-saved at the end of this session." -ForegroundColor Yellow
+          }
+
+      - name: 3. Fix Windows TLS for Rithmic (Rithmic only speaks TLS 1.2)
+        run: |
+          # Disable TLS 1.3 client (on by default on Server 2022/2025; breaks Rithmic handshake)
+          New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client' -Name 'Enabled' -Value 0 -Type DWord
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client' -Name 'DisabledByDefault' -Value 1 -Type DWord
+          # Make sure TLS 1.2 client is on
+          New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Name 'Enabled' -Value 1 -Type DWord
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client' -Name 'DisabledByDefault' -Value 0 -Type DWord
+          # .NET strong crypto (NinjaTrader is a 32-bit .NET app -> both registry views)
+          foreach ($k in 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319','HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319') {
+            Set-ItemProperty -Path $k -Name 'SchUseStrongCrypto' -Value 1 -Type DWord
+            Set-ItemProperty -Path $k -Name 'SystemDefaultTlsVersions' -Value 1 -Type DWord
+          }
+          Write-Host "TLS fix applied: TLS 1.3 client disabled, TLS 1.2 enabled."
+
+      - name: 4. Enable Remote Desktop, Firewall & Admin Password
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+          net user runneradmin "$Env:RDP_PASSWORD"
 
-      - name: 2. Create Admin Account
-        run: |
-          $Password = ConvertTo-SecureString "P@ssw0rd1qazXSW@#" -AsPlainText -Force
-          New-LocalUser -Name "NvDAdmin" -Password $Password -PasswordNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "NvDAdmin" -ErrorAction SilentlyContinue
-          net user runneradmin P@ssw0rd1qazXSW@#
-
-      - name: 3. Install & Connect Tailscale VPN
+      - name: 5. Install & Connect Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          # Download and install Tailscale silently
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
-          
-          # Connect to Tailscale network
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
-          
+          # hostname یکتا در هر اجرا؛ دستگاه‌های قدیمی در پنل Tailscale جمع می‌شوند،
+          # پس بهتر است AuthKey را از نوع Ephemeral بسازید
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="gh-rdp-${{ github.run_number }}"
           Start-Sleep -Seconds 8
-          
-          # Get Tailscale IP
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
-          Write-Host "  Username     : NvdAdmin" -ForegroundColor Yellow
-          Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
+          Write-Host "  Username     : runneradmin" -ForegroundColor Yellow
+          Write-Host "  Password     : $Env:RDP_PASSWORD" -ForegroundColor Yellow
           Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: 4. Keep Server Alive (48 Hours)
+      - name: 6. Keep alive ~5h20m, then close NinjaTrader safely for backup
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          for ($i = 1; $i -le 2880; $i++) {
+          $uri = "https://api.github.com/repos/$Env:GITHUB_REPOSITORY/contents/.stop-signal"
+          for ($i = 1; $i -le 320; $i++) {
+            # پایان زودهنگام: اگر فایل .stop-signal در ریپو ساخته شود، سشن حداکثر یک دقیقه بعد سالم تمام می‌شود
+            try {
+              Invoke-WebRequest -UseBasicParsing -Headers @{ Authorization = "Bearer $Env:GH_TOKEN" } -Uri $uri -ErrorAction Stop | Out-Null
+              Write-Host ">>> .stop-signal detected. Ending session early to save the snapshot." -ForegroundColor Cyan
+              break
+            } catch { }
             Start-Sleep -Seconds 60
-            Write-Host "[$i/2880] Server running..."
+            Write-Host "[$i/320] Server running... ($([math]::Round($i/60,1))h)"
           }
+          Write-Host "Session over. Closing NinjaTrader so its database files are unlocked..."
+          Get-Process | Where-Object { $_.ProcessName -like "NinjaTrader*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 20
+          Write-Host "Done. Cache post-step will now save the NinjaTrader snapshot automatically."
+
+# ================== راهنما / نکات مهم ==================
+#
+# 1) ورود به RDP همیشه با کاربر runneradmin انجام شود (نه کاربر دیگر)،
+#    چون مسیر بکاپ به پروفایل همین کاربر گره خورده است.
+#
+# 2) سشن ۶ ساعته است و بعدش بسته می‌شود؛ برای سشن بعدی فقط دوباره Workflow را Run کنید.
+#    بستن پنجره‌ی RDP مشکلی ندارد؛ سرور تا پایان سشن روشن می‌ماند.
+#    برای پایان زودهنگام: در ریپو فایلی به نام .stop-signal بسازید (بعد از پایان حذفش کنید).
+#    دقت: Cancel مستقیمِ جاب = بکاپ ذخیره نمی‌شود و تغییرات آن سشن از دست می‌رود.
+#
+# 3) IP جدید هر بار در لاگ مرحله 5 نوشته می‌شود، یا می‌توانید در پنل Tailscale
+#    دستگاه با hostname جدید (gh-rdp-...) را پیدا کنید.
+#
+# 4) هزینه/کووتا: ریپوی خصوصی فقط ۲۰۰۰ دقیقه در ماه رایگان دارد (≈ ۵ سشن ۶ ساعته).
+#    ریپوی عمومی نامحدود است ولی لاگ‌ها (شامل رمز عبور) برای همه قابل دیدن است
+#    و استفاده‌ی غیرمرتبط با توسعه‌ی نرم‌افزار از رانرهای گیت‌هاب، طبق قوانین گیت‌هاب
+#    می‌تواند منجر به تعلیق اکانت شود.
+#
+# 5) اگر دیتای نینجاتریدر (تیک‌ها/دیتای هیستوریکال) به ۱۰ گیگ نزدیک شد، کش جواب نمی‌دهد؛
+#    باید بکاپ را به جای دیگری ببرید (مثلاً Release asset با PAT، یا Google Drive)
+#    یا Download Data را در نینجاتریدر محدود کنید.
+#
+# 6) برای کار واقعاً ۲۴/۷ (مثلاً استراتژی اتومات بدون قطعی)، این ساختار مناسب نیست؛
+#    یک VPS ویندوزی ارزان یا سیستم شخصی خودتان + Tailscale راه درست است.
