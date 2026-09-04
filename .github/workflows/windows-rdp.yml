@@ -93,6 +93,11 @@ jobs:
             'TLS_RSA_WITH_AES_256_CBC_SHA'
             'TLS_RSA_WITH_AES_128_CBC_SHA'
           )
+          # Server 2025 ships WITHOUT any CBC suites enabled at all; Rithmic's gateways
+          # are CBC-only. Enable the legacy suites first, then reorder.
+          foreach ($s in $rithmicOrder) {
+            try { Enable-TlsCipherSuite -Name $s -ErrorAction Stop } catch { }
+          }
           $all = (Get-TlsCipherSuite | ForEach-Object { $_.Name })
           $newOrder = @($rithmicOrder | Where-Object { $all -contains $_ }) + @($all | Where-Object { $rithmicOrder -notcontains $_ })
           # Windows has no Set-TlsCipherSuite; the machine-wide order is set via the
