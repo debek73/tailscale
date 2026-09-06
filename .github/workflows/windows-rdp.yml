@@ -1,27 +1,24 @@
-# Windows Cloud RDP - Full Persistent Server Snapshot
+# Windows Cloud RDP - Full Persistent Server Snapshot (compressed)
 #
 # نحوه‌ی کار:
-#   هر سشن در پایان، یک "اسنپ‌شات کامل" از سرور می‌گیرد و در کش گیت‌هاب ذخیره می‌کند؛
-#   سشن بعدی موقع بالا آمدن، همه‌چیز را برمی‌گرداند:
+#   هر سشن در پایان، اسنپ‌شات کامل سرور را "مستقیم فشرده" می‌کند (بدون کپی خام،
+#   که دیسک را پر می‌کرد) و در کش گیت‌هاب ذخیره می‌کند؛ سشن بعدی همه‌چیز را برمی‌گرداند:
 #     - تمام فایل‌های پروفایل (دسکتاپ، Documents، Downloads، AppData و ...)
-#     - تنظیمات رجیستری کاربر و نرم‌افزارها (تم، Explorer، ترجیحات برنامه‌ها و ...)
-#     - برنامه‌های نصب‌شده داخل مسیرهای بکاپ
-#   قاعده: هر برنامه‌ای که نصب می‌کنید را در C:\Apps نصب کنید تا داخل بکاپ بیفتد
-#   (نینجاتریدر خودش در مسیرهای استاندارد بکاپ می‌شود).
+#     - تنظیمات رجیستری کاربر و نرم‌افزارها
+#     - برنامه‌های نصب‌شده (نینجاتریدر در مسیر استاندارد، بقیه در C:\Apps)
 #
 # محدودیت‌ها:
-#   - فایل‌های سیستمی ویندوز (C:\Windows) بکاپ نمی‌شوند - نیازی هم نیست، هر سشن یکسان نصب می‌شوند.
-#   - سقف کل کش گیت‌هاب ۱۰ گیگابایت است؛ فایل‌های خیلی حجیم نگه ندارید.
-#   - کش‌های ۷ روز استفاده‌نشده حذف می‌شوند؛ حداقل هفته‌ای یک‌بار سشن بگیرید.
-#   - ذخیره‌ی بکاپ فقط در پایانِ سالمِ سشن انجام می‌شود (پایان طبیعی یا .stop-signal).
-#     Cancel یا ری‌استارت = از دست رفتن تغییرات همان سشن!
+#   - فایل‌های سیستمی ویندوز بکاپ نمی‌شوند - هر سشن یکسان از نو نصب می‌شوند.
+#   - سقف کل کش گیت‌هاب ۱۰ گیگابایت است (اسنپ‌شات فشرده ذخیره می‌شود).
+#   - کش ۷ روز بی‌استفاده حذف می‌شود؛ حداقل هفته‌ای یک‌بار سشن بگیرید.
+#   - بکاپ فقط در پایانِ سالمِ سشن ذخیره می‌شود (پایان طبیعی یا .stop-signal).
+#     Cancel یا ری‌استارت داخل سرور = از دست رفتن تغییرات همان سشن!
 
 name: Windows Cloud RDP - NinjaTrader (Persistent)
 
 on:
   workflow_dispatch:
   # Auto-restart the session every ~6 hours (chain of sessions).
-  # Remove/comment this block to go back to manual runs only.
   schedule:
     - cron: '55 */6 * * *'
 
@@ -33,69 +30,35 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    # کمی زودتر از سقف ۳۶۰ دقیقه تمام می‌کنیم تا بکاپِ پایانی با خیال راحت ذخیره شود
     timeout-minutes: 359
     env:
-      # Password lives in repo secrets (Settings > Secrets and variables > Actions > RDP_PASSWORD).
-      # Secrets are never visible in public logs and cannot be read via the API.
+      # Password lives in repo secrets (never visible in public logs).
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      # Legacy cache: NT folders saved by older workflow versions (continuity for old snapshots)
-      - name: 1a. Restore NinjaTrader folders (legacy snapshot)
+      - name: 1. Restore full server snapshot
         uses: actions/cache@v4
         with:
-          path: |
-            C:\Program Files\NinjaTrader 8
-            C:\Program Files (x86)\NinjaTrader 8
-            C:\Users\runneradmin\Documents\NinjaTrader 8
-          key: nt8-snapshot-${{ github.run_id }}
-          restore-keys: |
-            nt8-snapshot-
-
-      # Full-server snapshot staging area
-      - name: 1b. Restore full server snapshot
-        uses: actions/cache@v4
-        with:
-          path: C:\persist
+          path: C:\persist-store
           key: server-snapshot-${{ github.run_id }}
           restore-keys: |
             server-snapshot-
 
       - name: 2. Restore files & registry from snapshot
         run: |
-          if (Test-Path 'C:\persist\profile') {
+          if (Test-Path 'C:\persist-store\profile.zip') {
             Write-Host "Snapshot found - restoring full server state..." -ForegroundColor Green
-            robocopy "C:\persist\profile" "C:\Users\runneradmin" /E /COPY:DAT /DCOPY:T /R:1 /W:1 /NFL /NDL /NJH | Out-Null
-            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
-            foreach ($root in 'C:\Program Files','C:\Program Files (x86)') {
-              $stage = 'C:\persist\ProgramFiles'
-              if ($root -like '*x86*') { $stage = 'C:\persist\ProgramFilesX86' }
-              if (Test-Path $stage) {
-                Get-ChildItem $stage -Directory | ForEach-Object {
-                  $dest = Join-Path $root $_.Name
-                  robocopy $_.FullName $dest /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NJH | Out-Null
-                  if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
-                }
-              }
-            }
-            if (Test-Path 'C:\persist\Apps') {
-              robocopy 'C:\persist\Apps' 'C:\Apps' /E /COPY:DAT /DCOPY:T /R:1 /W:1 /NFL /NDL /NJH | Out-Null
-              if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
-            }
-            if (Test-Path 'C:\persist\registry\HKCU.reg') {
-              reg import 'C:\persist\registry\HKCU.reg' 2>&1 | Out-Null
-              Write-Host "HKCU (user settings) imported."
-            }
-            if (Test-Path 'C:\persist\registry\HKLM-SOFTWARE.reg') {
-              reg import 'C:\persist\registry\HKLM-SOFTWARE.reg' 2>&1 | Out-Null
-              Write-Host "HKLM\SOFTWARE (app settings) imported."
-            }
+            tar -xf "C:\persist-store\profile.zip" -C "C:\Users"
+            if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
+            if (Test-Path 'C:\persist-store\nt64.zip') { tar -xf "C:\persist-store\nt64.zip" -C "C:\Program Files"; if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 } }
+            if (Test-Path 'C:\persist-store\nt86.zip') { tar -xf "C:\persist-store\nt86.zip" -C "C:\Program Files (x86)"; if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 } }
+            if (Test-Path 'C:\persist-store\apps.zip')  { tar -xf "C:\persist-store\apps.zip"  -C "C:\"; if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 } }
+            if (Test-Path 'C:\persist-store\registry\HKCU.reg') { reg import 'C:\persist-store\registry\HKCU.reg' 2>&1 | Out-Null; Write-Host "HKCU imported." }
+            if (Test-Path 'C:\persist-store\registry\HKLM-SOFTWARE.reg') { reg import 'C:\persist-store\registry\HKLM-SOFTWARE.reg' 2>&1 | Out-Null; Write-Host "HKLM imported." }
             if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
             Write-Host "Restore complete." -ForegroundColor Green
           } else {
-            Write-Host "No full snapshot yet. NinjaTrader folders (if any) were restored from the legacy cache." -ForegroundColor Yellow
-            Write-Host "Everything from THIS session will be saved at session end." -ForegroundColor Yellow
+            Write-Host "No snapshot yet - everything from THIS session will be saved at session end." -ForegroundColor Yellow
           }
 
       - name: 3. Fix Windows TLS for Rithmic (Rithmic only speaks TLS 1.2)
@@ -174,11 +137,10 @@ jobs:
             throw "Secret RDP_PASSWORD is not set. Add it under repo Settings > Secrets and variables > Actions."
           }
           # Fixed password from repo secret (never printed anywhere).
-          # Port 3389 is only reachable inside the user's own Tailscale network,
-          # so a fixed password is acceptable and enables saved-credential RDP shortcuts.
+          # Port 3389 is only reachable inside the user's own Tailscale network.
           net user runneradmin "$Env:RDP_PASSWORD"
-          Write-Host "runneradmin password set (unique for this session, not printed)." -ForegroundColor Green
-          # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10) - never from the internet.
+          Write-Host "runneradmin password set (not printed)." -ForegroundColor Green
+          # RDP is reachable ONLY from inside the Tailscale network (100.64.0.0/10).
           New-NetFirewallRule -DisplayName "RDP via Tailscale TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
@@ -190,16 +152,15 @@ jobs:
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="gh-rdp-${{ github.run_number }}"
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
           Start-Sleep -Seconds 8
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
-          Write-Host "  Device name  : nt-server  <- fixed address:" -ForegroundColor Yellow
-          Write-Host "                 nt-server.<tailnet>.ts.net (MagicDNS)" -ForegroundColor Yellow
-          Write-Host "  Username     : runneradmin" -ForegroundColor Yellow
-          Write-Host "  Password     : stored in repo secret RDP_PASSWORD (fixed)" -ForegroundColor Yellow
-          Write-Host "  >> Open mstsc and connect to the device IP." -ForegroundColor Magenta
+          Write-Host "  Fixed address : nt-server.tail9058f3.ts.net (MagicDNS)" -ForegroundColor Yellow
+          Write-Host "  Username      : runneradmin" -ForegroundColor Yellow
+          Write-Host "  Password      : stored in repo secret RDP_PASSWORD (fixed)" -ForegroundColor Yellow
+          Write-Host "  >> Use your saved RDP shortcut." -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
       - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
@@ -220,41 +181,52 @@ jobs:
           Write-Host "Session over. Closing apps so files unlock..."
           Get-Process | Where-Object { $_.ProcessName -like "NinjaTrader*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 20
-          # ---------- Stage FULL server snapshot ----------
-          New-Item -ItemType Directory -Force -Path 'C:\persist\registry' | Out-Null
-          reg export HKCU 'C:\persist\registry\HKCU.reg' /y | Out-Null
-          reg export 'HKLM\SOFTWARE' 'C:\persist\registry\HKLM-SOFTWARE.reg' /y | Out-Null
-          robocopy "C:\Users\runneradmin" "C:\persist\profile" /MIR /COPY:DAT /DCOPY:T /R:0 /W:0 /NFL /NDL /NJH `
-            /XF "NTUSER.DAT*" `
-            /XD "$env:USERPROFILE\AppData\Local\Temp" "$env:USERPROFILE\AppData\Local\Microsoft\Windows\INetCache" | Out-Null
-          if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+          # ---------- Stage FULL server snapshot (compressed, disk friendly) ----------
+          New-Item -ItemType Directory -Force -Path 'C:\persist-store\registry' | Out-Null
+          $free0 = [math]::Round((Get-PSDrive C).Free/1GB,1)
+          Write-Host "Free disk before snapshot: $free0 GB"
+          reg export HKCU 'C:\persist-store\registry\HKCU.reg' /y | Out-Null
+          reg export 'HKLM\SOFTWARE' 'C:\persist-store\registry\HKLM-SOFTWARE.reg' /y | Out-Null
+          # Profile zipped directly from source (no raw staging copy - that filled the disk)
+          tar -a -cf "C:\persist-store\profile.zip" `
+            --exclude="runneradmin/AppData/Local/Temp" `
+            --exclude="runneradmin/AppData/Local/Microsoft/Windows/INetCache" `
+            --exclude="runneradmin/AppData/Local/pip" `
+            --exclude="runneradmin/AppData/Local/npm-cache" `
+            --exclude="runneradmin/AppData/Local/Microsoft/VisualStudio" `
+            --exclude="NTUSER.DAT*" `
+            -C "C:\Users" "runneradmin"
+          Write-Host "profile.zip: $([math]::Round((Get-Item 'C:\persist-store\profile.zip').Length/1MB,0)) MB (tar exit $LASTEXITCODE)"
+          if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
           if (Test-Path 'C:\Program Files\NinjaTrader 8') {
-            robocopy "C:\Program Files\NinjaTrader 8" "C:\persist\ProgramFiles\NinjaTrader 8" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
-            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+            tar -a -cf "C:\persist-store\nt64.zip" -C "C:\Program Files" "NinjaTrader 8"
+            Write-Host "nt64.zip: $([math]::Round((Get-Item 'C:\persist-store\nt64.zip').Length/1MB,0)) MB"
+            if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
           }
           if (Test-Path 'C:\Program Files (x86)\NinjaTrader 8') {
-            robocopy "C:\Program Files (x86)\NinjaTrader 8" "C:\persist\ProgramFilesX86\NinjaTrader 8" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
-            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+            tar -a -cf "C:\persist-store\nt86.zip" -C "C:\Program Files (x86)" "NinjaTrader 8"
+            Write-Host "nt86.zip: $([math]::Round((Get-Item 'C:\persist-store\nt86.zip').Length/1MB,0)) MB"
+            if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
           }
           if (Test-Path 'C:\Apps') {
-            robocopy "C:\Apps" "C:\persist\Apps" /MIR /R:0 /W:0 /NFL /NDL /NJH | Out-Null
-            if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+            tar -a -cf "C:\persist-store\apps.zip" -C "C:\" "Apps"
+            Write-Host "apps.zip: $([math]::Round((Get-Item 'C:\persist-store\apps.zip').Length/1MB,0)) MB"
+            if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
           }
+          $free1 = [math]::Round((Get-PSDrive C).Free/1GB,1)
+          Write-Host "Free disk after snapshot: $free1 GB"
           Write-Host "Full snapshot staged. Cache post-step will save it automatically." -ForegroundColor Green
 
 # ================== راهنما / نکات مهم ==================
 #
-# 1) ورود به RDP همیشه با کاربر runneradmin انجام شود.
-#    رمز هر سشن = مقدار Secret رمز پایه + "-" + شماره ران
-#    (شماره ران = عدد آخر نام دستگاه gh-rdp-<N> در اپ Tailscale شما).
+# 1) رمز ثابت سرور = مقدار Secret رمز پایه (RDP_PASSWORD).
+#    آدرس ثابت اتصال = nt-server.tail9058f3.ts.net
 #
 # 2) پایان سشن: فایل .stop-signal در ریپو بسازید (یا بگویید «تمام شد»).
 #    Cancel مستقیمِ جاب = بکاپ ذخیره نمی‌شود. ری‌استارت داخل سرور هم هرگز!
 #
 # 3) هر برنامه‌ای که نصب می‌کنید را در C:\Apps نصب کنید تا داخل بکاپ بیفتد.
-#    مسیر نصب دیگری لازم داشتید، بگویید تا به لیست بکاپ اضافه شود.
 #
-# 4) سقف کش ۱۰ گیگابایت است؛ کش ۷ روز بی‌استفاده حذف می‌شود.
+# 4) سقف کش ۱۰ گیگابایت است (اسنپ‌شات فشرده)؛ کش ۷ روز بی‌استفاده حذف می‌شود.
 #
-# 5) هزینه: ریپوی عمومی دقیقه نامحدود رایگان دارد؛ لاگ‌ها عمومی‌اند ولی
-#    دیگر هیچ رمز یا IP قابل‌استفاده‌ای در آن‌ها نیست.
+# 5) ریپوی عمومی = دقیقه نامحدود؛ لاگ‌ها عمومی‌اند ولی هیچ رمز یا IP‌ای در آن‌ها نیست.
