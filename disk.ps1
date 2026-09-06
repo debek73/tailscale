@@ -2,9 +2,10 @@ $ErrorActionPreference = 'Continue'
 function W($t) { Write-Host $t }
 function DirSize($p) {
   if (-not (Test-Path $p)) { return $null }
-  $out = robocopy $p "C:\__null_dest__" /L /S /BYTES /NFL /NDL /NJH /NJS /XJ 2>$null | Select-String 'Bytes :'
-  if ($out) {
-    $bytes = [long]($out.ToString() -replace '.*Bytes :\s*','' -replace '\s.*','')
+  $lines = robocopy $p "$env:TEMP\__null_dest__" /L /S /BYTES /NFL /NDL /NJH /XJ 2>$null
+  $line = $lines | Where-Object { $_ -match '^\s*Bytes\s*:' } | Select-Object -First 1
+  if ($line) {
+    $bytes = [long]($line -replace '^\s*Bytes\s*:\s*','' -replace '\s.*$','')
     return [math]::Round($bytes/1MB,0)
   }
   return 0
