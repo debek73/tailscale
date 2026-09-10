@@ -194,6 +194,10 @@ jobs:
             --exclude="runneradmin/AppData/Local/pip" `
             --exclude="runneradmin/AppData/Local/npm-cache" `
             --exclude="runneradmin/AppData/Local/Microsoft/VisualStudio" `
+            --exclude="runneradmin/AppData/Local/AzureFunctionsTools" `
+            --exclude="runneradmin/AppData/Local/lm-studio-updater" `
+            --exclude="runneradmin/.lmstudio/models" `
+            --exclude="runneradmin/.lmstudio/models/*" `
             --exclude="NTUSER.DAT*" `
             -C "C:\Users" "runneradmin"
           Write-Host "profile.zip: $([math]::Round((Get-Item 'C:\persist-store\profile.zip').Length/1MB,0)) MB (tar exit $LASTEXITCODE)"
