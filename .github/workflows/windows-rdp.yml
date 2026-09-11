@@ -164,18 +164,41 @@ jobs:
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
 
-      - name: 5. Connect Tailscale (official action)
-        uses: tailscale/github-action@v4
-        with:
-          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          log-mode: normal
-
-      - name: 5b. Set fixed hostname
+      - name: 5. Connect Tailscale (portable tgz - bypasses broken MSI installer)
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           $ErrorActionPreference = 'Continue'
-          $exe = @(Get-ChildItem "C:\Program Files\Tailscale	ailscale.exe","$env:LOCALAPPDATA\Microsoft\WinGet\Links	ailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if ($exe) { & $exe set --hostname="nt-server" 2>&1 | Write-Host; Write-Host "hostname set to nt-server" }
-          else { Write-Host "tailscale CLI not found for hostname step" }
+          New-Item -ItemType Directory -Force -Path 'C:	s' | Out-Null
+          $html = Invoke-WebRequest "https://pkgs.tailscale.com/stable/" -UseBasicParsing
+          $tgz = ([regex]::Match($html.Content, 'href="(tailscale_[0-9.]+_amd64\.tgz)"')).Groups[1].Value
+          if (-not $tgz) { throw "could not find portable tgz on pkgs.tailscale.com" }
+          Write-Host "Downloading $tgz ..."
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:	s	s.tgz" -UseBasicParsing
+          tar -xzf "C:	s	s.tgz" -C "C:	s"
+          $exe = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
+          $tsd  = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
+          if (-not $exe -or -not $tsd) { throw "tailscale binaries missing from archive" }
+          Write-Host "Running tailscaled (portable, no MSI)..."
+          Start-Process $tsd -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
+          Start-Sleep -Seconds 8
+          & $exe status 2>&1 | Write-Host
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
+          Write-Host "  Fixed address : nt-server.tail9058f3.ts.net (MagicDNS)" -ForegroundColor Yellow
+          Write-Host "  Username      : runneradmin" -ForegroundColor Yellow
+          Write-Host "  Password      : stored in repo secret RDP_PASSWORD (fixed)" -ForegroundColor Yellow
+          Write-Host "  >> Use your saved RDP shortcut." -ForegroundColor Magenta
+          Write-Host "==================================================" -ForegroundColor Green
+
+      - name: 5b. Refresh MagicDNS name
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
+          if ($exe) { & $exe set --hostname="nt-server" 2>&1 | Write-Host }
 
       - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
         env:
