@@ -62,13 +62,18 @@ jobs:
               New-Item -ItemType Directory -Force -Path 'C:\Users\runneradmin\.lmstudio' | Out-Null
               Move-Item 'C:\persist-store\models' 'C:\Users\runneradmin\.lmstudio\models'
               Write-Host "LM Studio models restored from store."
-            } elseif ('${{ vars.HF_MODEL_URL }}' -ne '') {
-              $u = [Uri]'${{ vars.HF_MODEL_URL }}'
-              $segs = $u.AbsolutePath.TrimStart('/').Split('/')
-              $dir = "C:\Users\runneradmin\.lmstudio\models\$($segs[0])\$($segs[1])"
+            } elseif ('${{ vars.HF_MODEL_REPO }}' -ne '') {
+              $repo = '${{ vars.HF_MODEL_REPO }}'
+              $api = Invoke-RestMethod "https://huggingface.co/api/models/$repo"
+              $dir = "C:\Users\runneradmin\.lmstudio\models\$($repo.Replace('/','\'))"
               New-Item -ItemType Directory -Force -Path $dir | Out-Null
-              Write-Host "Downloading model from Hugging Face (few minutes)..."
-              curl.exe -L -o (Join-Path $dir $segs[-1]) '${{ vars.HF_MODEL_URL }}'
+              Write-Host "Downloading model files from Hugging Face (few minutes)..."
+              foreach ($f in $api.siblings) {
+                if ($f.rfilename -notmatch '/' -and $f.rfilename -notmatch '\.md$') {
+                  Write-Host "  $($f.rfilename)"
+                  curl.exe -sS -L -o (Join-Path $dir $f.rfilename) "https://huggingface.co/$repo/resolve/main/$($f.rfilename)"
+                }
+              }
               Write-Host "Model downloaded."
             }
             if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
@@ -211,7 +216,7 @@ jobs:
           reg export 'HKLM\SOFTWARE' 'C:\persist-store\registry\HKLM-SOFTWARE.reg' /y | Out-Null
           # LM Studio models: HF mode re-downloads each session (keeps cache small);
           # otherwise move (not copy) the 6GB into the store to avoid disk blowup
-          if ('${{ vars.HF_MODEL_URL }}' -ne '') {
+          if ('${{ vars.HF_MODEL_REPO }}' -ne '') {
             if (Test-Path 'C:\Users\runneradmin\.lmstudio\models') { Remove-Item 'C:\Users\runneradmin\.lmstudio\models' -Recurse -Force -ErrorAction SilentlyContinue }
             Write-Host "HF mode: models will be re-downloaded next session."
           } elseif (Test-Path 'C:\Users\runneradmin\.lmstudio\models') {
