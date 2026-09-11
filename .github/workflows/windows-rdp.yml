@@ -168,10 +168,27 @@ jobs:
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
-          Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
-          Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
+          $ErrorActionPreference = 'Continue'
+          $exe = "C:\Program Files\Tailscale\tailscale.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "Installing Tailscale via MSI..."
+            Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi" -UseBasicParsing
+            Write-Host "MSI size: $([math]::Round((Get-Item 'C:\tailscale.msi').Length/1MB,1)) MB"
+            $p = Start-Process msiexec -ArgumentList '/i C:\tailscale.msi /quiet /norestart /lv*C C:\ts-install.log' -Wait -PassThru
+            Write-Host "msiexec exit code: $($p.ExitCode)"
+            if (-not (Test-Path $exe)) {
+              Write-Host "MSI install log (last 25 lines):"
+              Get-Content 'C:\ts-install.log' -Tail 25 -ErrorAction SilentlyContinue | Write-Host
+              Write-Host "Falling back to winget install..."
+              winget install --id Tailscale.Tailscale -e --accept-source-agreements --accept-package-agreements --silent
+            }
+          } else {
+            Write-Host "Tailscale already present on the image."
+          }
+          $exe = @(Get-ChildItem "C:\Program Files\Tailscale\tailscale.exe","$env:LOCALAPPDATA\Microsoft\WinGet\Links\tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $exe) { throw "tailscale.exe not found after install (see logs above)" }
+          Write-Host "Using tailscale at: $exe"
+          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
           Start-Sleep -Seconds 8
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
