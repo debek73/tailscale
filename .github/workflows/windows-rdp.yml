@@ -117,6 +117,9 @@ jobs:
           Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
           Get-Process -Name 'tailscaled','tailscale-ipn' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
+          # wipe possibly corrupted LocalSystem state so tailscaled boots clean
+          Stop-Service Tailscale -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:SystemRoot\System32\config\systemprofile\AppData\Local\Tailscale	ailscaled.state" -Force -ErrorAction SilentlyContinue
           New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
           Start-Service Tailscale
           Get-Service Tailscale | Out-String | Write-Host
