@@ -62,17 +62,15 @@ jobs:
               New-Item -ItemType Directory -Force -Path 'C:\Users\runneradmin\.lmstudio' | Out-Null
               Move-Item 'C:\persist-store\models' 'C:\Users\runneradmin\.lmstudio\models'
               Write-Host "LM Studio models restored from store."
-            } elseif ('${{ vars.HF_MODEL_REPO }}' -ne '') {
+            } elseif ('${{ vars.HF_MODEL_FILES }}' -ne '') {
               $repo = '${{ vars.HF_MODEL_REPO }}'
-              $api = Invoke-RestMethod "https://huggingface.co/api/models/$repo"
               $dir = "C:\Users\runneradmin\.lmstudio\models\$($repo.Replace('/','\'))"
               New-Item -ItemType Directory -Force -Path $dir | Out-Null
+              $files = '${{ vars.HF_MODEL_FILES }}'.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
               Write-Host "Downloading model files from Hugging Face (few minutes)..."
-              foreach ($f in $api.siblings) {
-                if ($f.rfilename -notmatch '/' -and $f.rfilename -notmatch '\.md$') {
-                  Write-Host "  $($f.rfilename)"
-                  curl.exe -sS -L -o (Join-Path $dir $f.rfilename) "https://huggingface.co/$repo/resolve/main/$($f.rfilename)"
-                }
+              foreach ($f in $files) {
+                Write-Host "  $f"
+                curl.exe -sS -L -o (Join-Path $dir $f) "https://huggingface.co/$repo/resolve/main/$f"
               }
               Write-Host "Model downloaded."
             }
