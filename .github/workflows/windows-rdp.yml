@@ -55,6 +55,22 @@ jobs:
             if (Test-Path 'C:\persist-store\apps.zip')  { tar -xf "C:\persist-store\apps.zip"  -C "C:\"; if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 } }
             if (Test-Path 'C:\persist-store\registry\HKCU.reg') { reg import 'C:\persist-store\registry\HKCU.reg' 2>&1 | Out-Null; Write-Host "HKCU imported." }
             if (Test-Path 'C:\persist-store\registry\HKLM-SOFTWARE.reg') { reg import 'C:\persist-store\registry\HKLM-SOFTWARE.reg' 2>&1 | Out-Null; Write-Host "HKLM imported." }
+            # ATAS Platform (Program Files) back into place
+            if (Test-Path 'C:\persist-store\atas.zip') { tar -xf "C:\persist-store\atas.zip" -C "C:\Program Files"; if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 } }
+            # LM Studio models: from store, or auto-download from Hugging Face (repo variable HF_MODEL_URL)
+            if (Test-Path 'C:\persist-store\models') {
+              New-Item -ItemType Directory -Force -Path 'C:\Users\runneradmin\.lmstudio' | Out-Null
+              Move-Item 'C:\persist-store\models' 'C:\Users\runneradmin\.lmstudio\models'
+              Write-Host "LM Studio models restored from store."
+            } elseif ('${{ vars.HF_MODEL_URL }}' -ne '') {
+              $u = [Uri]'${{ vars.HF_MODEL_URL }}'
+              $segs = $u.AbsolutePath.TrimStart('/').Split('/')
+              $dir = "C:\Users\runneradmin\.lmstudio\models\$($segs[0])\$($segs[1])"
+              New-Item -ItemType Directory -Force -Path $dir | Out-Null
+              Write-Host "Downloading model from Hugging Face (few minutes)..."
+              curl.exe -L -o (Join-Path $dir $segs[-1]) '${{ vars.HF_MODEL_URL }}'
+              Write-Host "Model downloaded."
+            }
             if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
             Write-Host "Restore complete." -ForegroundColor Green
           } else {
@@ -187,6 +203,16 @@ jobs:
           Write-Host "Free disk before snapshot: $free0 GB"
           reg export HKCU 'C:\persist-store\registry\HKCU.reg' /y | Out-Null
           reg export 'HKLM\SOFTWARE' 'C:\persist-store\registry\HKLM-SOFTWARE.reg' /y | Out-Null
+          # LM Studio models: HF mode re-downloads each session (keeps cache small);
+          # otherwise move (not copy) the 6GB into the store to avoid disk blowup
+          if ('${{ vars.HF_MODEL_URL }}' -ne '') {
+            if (Test-Path 'C:\Users\runneradmin\.lmstudio\models') { Remove-Item 'C:\Users\runneradmin\.lmstudio\models' -Recurse -Force -ErrorAction SilentlyContinue }
+            Write-Host "HF mode: models will be re-downloaded next session."
+          } elseif (Test-Path 'C:\Users\runneradmin\.lmstudio\models') {
+            if (Test-Path 'C:\persist-store\models') { Remove-Item 'C:\persist-store\models' -Recurse -Force -ErrorAction SilentlyContinue }
+            Move-Item 'C:\Users\runneradmin\.lmstudio\models' 'C:\persist-store\models'
+            Write-Host "LM Studio models moved into the snapshot store."
+          }
           # Profile zipped directly from source (no raw staging copy - that filled the disk)
           tar -a -cf "C:\persist-store\profile.zip" `
             --exclude="runneradmin/AppData/Local/Temp" `
@@ -215,6 +241,11 @@ jobs:
           if (Test-Path 'C:\Apps') {
             tar -a -cf "C:\persist-store\apps.zip" -C "C:\" "Apps"
             Write-Host "apps.zip: $([math]::Round((Get-Item 'C:\persist-store\apps.zip').Length/1MB,0)) MB"
+            if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
+          }
+          if (Test-Path 'C:\Program Files\ATAS Platform') {
+            tar -a -cf "C:\persist-store\atas.zip" -C "C:\Program Files" "ATAS Platform"
+            Write-Host "atas.zip: $([math]::Round((Get-Item 'C:\persist-store\atas.zip').Length/1MB,0)) MB"
             if ($LASTEXITCODE -lt 2) { $global:LASTEXITCODE = 0 }
           }
           $free1 = [math]::Round((Get-PSDrive C).Free/1GB,1)
