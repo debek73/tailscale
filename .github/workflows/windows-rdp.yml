@@ -124,7 +124,21 @@ jobs:
           Start-Service Tailscale
           Get-Service Tailscale | Out-String | Write-Host
           # let tailscaled fully initialize before the first login attempt
-          Start-Sleep -Seconds 60
+          Start-Sleep -Seconds 20
+          # ---- crash diagnostic: run tailscaled in foreground via cmd, capture panic ----
+          Stop-Service Tailscale -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          if (Test-Path 'C:	sd-con.log') { Remove-Item 'C:	sd-con.log' -Force }
+          Start-Process cmd.exe -ArgumentList '/c', "`"$tsd`" > C:	sd-con.log 2>&1" -WindowStyle Hidden
+          Start-Sleep -Seconds 40
+          Write-Host "=== tailscaled foreground log (40s) ==="
+          Get-Content 'C:	sd-con.log' -ErrorAction SilentlyContinue | Select-Object -Last 100 | ForEach-Object { Write-Host "$_" }
+          Write-Host "=== Event Log (Tailscale crashes) ==="
+          Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddMinutes(-10)} -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'Tailscale|tailscaled' } | Select-Object -First 10 | ForEach-Object { Write-Host ("{0} id={1}: {2}" -f $_.TimeCreated, $_.Id, ($_.Message -replace "`r`n"," ")) }
+          if (Test-Path 'C:	sd-con.log') { Write-Host "=== manual log size: $((Get-Item 'C:	sd-con.log').Length) bytes ===" }
+          Get-Process -Name 'tailscaled' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Service Tailscale
+          Start-Sleep -Seconds 20
           & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
           $connected = $false
           foreach ($t in 1..16) {
