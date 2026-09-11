@@ -135,9 +135,10 @@ jobs:
           Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
           Get-Process -Name 'tailscaled','tailscale-ipn' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
-          sc.exe create Tailscale binPath= "\"$tsd\"" start= auto obj= LocalSystem DisplayName= "Tailscale" | Write-Host
+          New-Service -Name Tailscale -BinaryPathName "\"$tsd\"" -DisplayName "Tailscale" -StartupType Automatic -ErrorAction SilentlyContinue | Out-Null
           sc.exe failure Tailscale reset= 0 actions= restart/10000 | Write-Host
-          sc.exe start Tailscale | Write-Host
+          Start-Service Tailscale -ErrorAction Continue
+          Get-Service Tailscale -ErrorAction SilentlyContinue | Format-List Name,Status,StartType | Out-String | Write-Host
           Start-Sleep -Seconds 8
           sc.exe query Tailscale | Write-Host
           # sanity: controlplane reachable from this runner?
