@@ -164,24 +164,33 @@ jobs:
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
 
-      - name: 5. Connect Tailscale (portable tgz - bypasses broken MSI installer)
+      - name: 5. Connect Tailscale (admin-extract, bypasses broken MSI install)
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           $ErrorActionPreference = 'Continue'
-          New-Item -ItemType Directory -Force -Path 'C:\ts' | Out-Null
-          $html = Invoke-WebRequest "https://pkgs.tailscale.com/stable/" -UseBasicParsing
-          $tgz = ([regex]::Match($html.Content, 'href="(tailscale_[0-9.]+_amd64\.tgz)"')).Groups[1].Value
-          if (-not $tgz) { throw "could not find portable tgz on pkgs.tailscale.com" }
-          Write-Host "Downloading $tgz ..."
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:\ts\ts.tgz" -UseBasicParsing
-          tar -xzf "C:\ts\ts.tgz" -C "C:\ts"
-          $exe = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
-          $tsd  = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
-          if (-not $exe -or -not $tsd) { throw "tailscale binaries missing from archive" }
-          Write-Host "Running tailscaled (portable, no MSI)..."
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-1.102.3-amd64.msi" -OutFile "C:\tailscale.msi" -UseBasicParsing
+          Write-Host "MSI size: $([math]::Round((Get-Item 'C:\tailscale.msi').Length/1MB,1)) MB"
+          # 1) administrative extract: pulls files out of the MSI WITHOUT installing (no custom actions)
+          $p = Start-Process msiexec -ArgumentList '/a C:\tailscale.msi /qn TARGETDIR=C:\tsadmin' -Wait -PassThru
+          Write-Host "admin extract exit: $($p.ExitCode)"
+          $exe  = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscale.exe"  -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $tsd  = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscaled.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $wint = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "wintun.dll"     -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          Write-Host "extracted: exe=$exe tsd=$tsd wintun=$wint"
+          if (-not $exe -or -not $tsd) {
+            # 2) normal install for diagnosis - print the REAL failing MSI action
+            $p2 = Start-Process msiexec -ArgumentList '/i C:\tailscale.msi /quiet /norestart /lv*C C:\ts-install.log' -Wait -PassThru
+            Write-Host "msiexec install exit: $($p2.ExitCode)"
+            Write-Host "--- filtered MSI error lines ---"
+            Select-String -Path 'C:\ts-install.log' -Pattern 'return value 3','error 3','error code','CustomAction','wintun','Note: 1: 17' -ErrorAction SilentlyContinue | ForEach-Object { $_.Line } | Write-Host
+            throw "could not obtain tailscale binaries (see filtered MSI log above)"
+          }
+          # place wintun.dll next to tailscaled so the driver can load without the installer
+          if ($wint) { Copy-Item $wint (Split-Path $tsd) -Force }
+          Write-Host "Running tailscaled manually (no MSI service)..."
           Start-Process $tsd -WindowStyle Hidden
-          Start-Sleep -Seconds 6
+          Start-Sleep -Seconds 8
           & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
           Start-Sleep -Seconds 8
           & $exe status 2>&1 | Write-Host
@@ -197,7 +206,7 @@ jobs:
       - name: 5b. Refresh MagicDNS name
         run: |
           $ErrorActionPreference = 'Continue'
-          $exe = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
+          $exe = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if ($exe) { & $exe set --hostname="nt-server" 2>&1 | Write-Host }
 
       - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
