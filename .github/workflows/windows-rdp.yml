@@ -132,17 +132,31 @@ jobs:
           # place wintun.dll next to tailscaled so the driver can load without the installer
           if ($wint -and (Split-Path $wint) -ne (Split-Path $tsd)) { Copy-Item $wint (Split-Path $tsd) -Force }
           Write-Host "Running tailscaled manually (no MSI service)..."
-          Start-Process $tsd -WindowStyle Hidden
+          # kill any preexisting tailscale service/processes to avoid pipe/state conflicts
+          Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
+          Get-Process -Name 'tailscaled','tailscale-ipn','tailscale' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Remove-Item "$env:LOCALAPPDATA\Tailscale	ailscaled.state" -Force -ErrorAction SilentlyContinue
+          $tsdOut = "C:	sd-out.log"; $tsdErr = "C:	sd-err.log"
+          $p = Start-Process $tsd -WindowStyle Hidden -RedirectStandardOutput $tsdOut -RedirectStandardError $tsdErr -PassThru
+          Start-Sleep -Seconds 5
+          Write-Host "tailscaled pid=$($p.Id) alive=$(-not $p.HasExited)"
           $up = $false
-          foreach ($t in 1..24) {
-            Start-Sleep -Seconds 10
+          foreach ($t in 1..10) {
+            Start-Sleep -Seconds 20
             & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $up = $true; break }
             Write-Host ">>> attempt ${t}: not connected yet, retrying..."
           }
-          if (-not $up) { throw "tailscale did not connect after 24 attempts" }
+          if (-not $up) {
+            Write-Host "=== tailscaled stdout (last 60) ==="
+            Get-Content $tsdOut -ErrorAction SilentlyContinue | Select-Object -Last 60 | ForEach-Object { Write-Host "$_" }
+            Write-Host "=== tailscaled stderr (last 60) ==="
+            Get-Content $tsdErr -ErrorAction SilentlyContinue | Select-Object -Last 60 | ForEach-Object { Write-Host "$_" }
+            throw "tailscale did not connect after 10 attempts"
+          }
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
