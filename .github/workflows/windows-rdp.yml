@@ -1,7 +1,4 @@
-# Windows Cloud RDP - NinjaTrader (fresh session, NO backup)
-# هر ران = سرور تمیز. تنظیمات ریتمیک/نینجا و RDP و تیل‌اسکیل داخل همین فایل هستند.
-# پایان سشن: فایل .stop-signal در ریشه ریپو ساخته شود (حداکثر ۱ دقیقه بعد تمام می‌شود).
-
+# Windows Cloud RDP - NinjaTrader (fresh session, no backup)
 name: Windows Cloud RDP - NinjaTrader
 
 on:
@@ -105,40 +102,40 @@ jobs:
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
 
-      - name: Install & connect Tailscale
+      - name: 3. Install & connect Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           $ErrorActionPreference = 'Continue'
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-1.102.3-amd64.msi" -OutFile "C:	ailscale.msi" -UseBasicParsing
-          Start-Process msiexec -ArgumentList '/a C:	ailscale.msi /qn TARGETDIR=C:	sadmin' -Wait | Out-Null
-          $exe = @(Get-ChildItem "C:	sadmin" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
-          $tsd = @(Get-ChildItem "C:	sadmin" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
-          if (-not $exe -or -not $tsd) { throw "tailscale binaries not extracted" }
-          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic | Out-Null
-          Start-Service Tailscale -ErrorAction Continue
-          # wait until the daemon is FULLY initialized (never call up while it says "starting")
-          $ready = $false; $st = ''
-          foreach ($i in 1..60) {
-            Start-Sleep -Seconds 5
-            $svc = (Get-Service Tailscale -ErrorAction SilentlyContinue).Status
-            if ($svc -ne 'Running') { Start-Service Tailscale -ErrorAction Continue; continue }
-            $st = (& $exe status 2>&1 | Out-String)
-            if ($st -notmatch 'starting') { $ready = $true; break }
-          }
-          Write-Host "daemon after wait:"; $st | ForEach-Object { Write-Host "$_" }
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-1.102.3-amd64.msi" -OutFile "C:\tailscale.msi" -UseBasicParsing
+          $p = Start-Process msiexec -ArgumentList '/a C:\tailscale.msi /qn TARGETDIR=C:\tsadmin' -Wait -PassThru
+          $exe = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $tsd = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscaled.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $wint = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "wintun.dll" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $exe -or -not $tsd) { throw "tailscale binaries missing after admin extract" }
+          if ($wint) { Copy-Item $wint (Split-Path $tsd) -Force -ErrorAction SilentlyContinue }
+          Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
+          Get-Process -Name 'tailscaled','tailscale-ipn' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
+          Start-Service Tailscale
+          Get-Service Tailscale | Out-String | Write-Host
+          # let tailscaled fully initialize before the first login attempt
+          Start-Sleep -Seconds 60
+          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
           $connected = $false
-          foreach ($t in 1..5) {
-            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
-            Start-Sleep -Seconds 10
+          foreach ($t in 1..16) {
+            Start-Sleep -Seconds 15
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $connected = $true; break }
-            Write-Host ">>> try ${t}: not connected, retrying up..."
+            if ($t -eq 8) {
+              Write-Host ">>> retrying login once..."
+              & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
+            }
           }
-          if (-not $connected) { throw "tailscale could not connect" }
-          Write-Host ""
-          Write-Host ">>> RDP SERVER IS READY: nt-server.tail9058f3.ts.net (runneradmin)" -ForegroundColor Green
+          if (-not $connected) { throw "tailscale never got a tailnet IP" }
+          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
 
       - name: Keep alive ~5h20m (.stop-signal ends early)
         env:
