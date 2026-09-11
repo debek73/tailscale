@@ -139,7 +139,19 @@ jobs:
           Get-Process -Name 'tailscaled' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Service Tailscale
           Start-Sleep -Seconds 20
+          Write-Host "=== tailscale version ==="
+          & $exe version 2>&1 | ForEach-Object { Write-Host "$_" }
+          Write-Host "=== daemon-logs while calling up (90s) ==="
+          $dl = Start-Process cmd.exe -ArgumentList '/c', "`"$exe`" debug daemon-logs > C:\daemon.log 2>&1" -WindowStyle Hidden -PassThru
+          Start-Sleep -Seconds 2
           & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
+          Start-Sleep -Seconds 20
+          Stop-Process -Id $dl.Id -Force -ErrorAction SilentlyContinue
+          taskkill /IM tailscale.exe /F 2>&1 | Out-Null
+          Write-Host "=== daemon.log ==="
+          Get-Content 'C:\daemon.log' -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { Write-Host "$_" }
+          Write-Host "=== status --json health ==="
+          (& $exe status --json 2>&1 | Out-String) -replace '\s+', ' ' | ForEach-Object { Write-Host ($_.Substring(0, [Math]::Min(1500, $_.Length))) }
           $connected = $false
           foreach ($t in 1..16) {
             Start-Sleep -Seconds 15
