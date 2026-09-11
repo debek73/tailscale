@@ -161,8 +161,13 @@ jobs:
             Write-Host "=== Tailscale service logs (systemprofile) ==="
             $logRoot = "$env:SystemRoot\System32\config\systemprofile\AppData\Local\Tailscale"
             Get-ChildItem $logRoot -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 60 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "$_" } }
-            Write-Host "=== netcheck ==="
-            & $exe debug netcheck 2>&1 | Out-String | Write-Host
+            Write-Host "=== Event Log: Tailscale service events ==="
+            Get-WinEvent -FilterHashtable @{LogName='System'; Id=7031,7034,7036,7000,7009} -MaxEvents 25 -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'Tailscale' } | ForEach-Object { Write-Host ("{0} id={1}: {2}" -f $_.TimeCreated, $_.Id, ($_.Message -replace "`r`n"," ")) }
+            Write-Host "=== manual tailscaled run via cmd (30s capture) ==="
+            if (Test-Path 'C:	sd-con.log') { Remove-Item 'C:	sd-con.log' -Force }
+            Start-Process cmd.exe -ArgumentList '/c', "`"$tsd`" > C:	sd-con.log 2>&1" -WindowStyle Hidden
+            Start-Sleep -Seconds 30
+            Get-Content 'C:	sd-con.log' -ErrorAction SilentlyContinue | Select-Object -Last 80 | ForEach-Object { Write-Host "$_" }
             throw "tailscale did not connect after 10 attempts"
           }
           Write-Host ""
