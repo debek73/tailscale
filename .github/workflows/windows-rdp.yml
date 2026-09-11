@@ -135,7 +135,7 @@ jobs:
           Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
           Get-Process -Name 'tailscaled','tailscale-ipn' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
-          New-Service -Name Tailscale -BinaryPathName "\"$tsd\"" -DisplayName "Tailscale" -StartupType Automatic -ErrorAction SilentlyContinue | Out-Null
+          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
           sc.exe failure Tailscale reset= 0 actions= restart/10000 | Write-Host
           Start-Service Tailscale -ErrorAction Continue
           Get-Service Tailscale -ErrorAction SilentlyContinue | Format-List Name,Status,StartType | Out-String | Write-Host
