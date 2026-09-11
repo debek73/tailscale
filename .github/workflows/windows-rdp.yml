@@ -134,15 +134,15 @@ jobs:
           Write-Host "Running tailscaled manually (no MSI service)..."
           Start-Process $tsd -WindowStyle Hidden
           $up = $false
-          foreach ($t in 1..18) {
+          foreach ($t in 1..24) {
             Start-Sleep -Seconds 10
-            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | Write-Host
-            if ($LASTEXITCODE -eq 0) { $up = $true; break }
-            Write-Host "tailscale up attempt $t not ready yet (exit $LASTEXITCODE) - retrying..."
+            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
+            $st = (& $exe status 2>&1 | Out-String)
+            $st | ForEach-Object { Write-Host "$_" }
+            if ($st -match '100\.') { $up = $true; break }
+            Write-Host ">>> attempt $t: not connected yet, retrying..."
           }
-          if (-not $up) { throw "tailscale up did not succeed after retries" }
-          Start-Sleep -Seconds 5
-          & $exe status 2>&1 | Write-Host
+          if (-not $up) { throw "tailscale did not connect after 24 attempts" }
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
