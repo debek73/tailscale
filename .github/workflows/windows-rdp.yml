@@ -140,7 +140,7 @@ jobs:
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $up = $true; break }
-            Write-Host ">>> attempt $t: not connected yet, retrying..."
+            Write-Host ">>> attempt ${t}: not connected yet, retrying..."
           }
           if (-not $up) { throw "tailscale did not connect after 24 attempts" }
           Write-Host ""
