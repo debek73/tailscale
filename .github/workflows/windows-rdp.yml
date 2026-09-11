@@ -174,8 +174,8 @@ jobs:
           $tgz = ([regex]::Match($html.Content, 'href="(tailscale_[0-9.]+_amd64\.tgz)"')).Groups[1].Value
           if (-not $tgz) { throw "could not find portable tgz on pkgs.tailscale.com" }
           Write-Host "Downloading $tgz ..."
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:\ts	s.tgz" -UseBasicParsing
-          tar -xzf "C:\ts	s.tgz" -C "C:\ts"
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:\ts\ts.tgz" -UseBasicParsing
+          tar -xzf "C:\ts\ts.tgz" -C "C:\ts"
           $exe = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
           $tsd  = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
           if (-not $exe -or -not $tsd) { throw "tailscale binaries missing from archive" }
