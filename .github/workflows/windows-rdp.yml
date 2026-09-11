@@ -169,15 +169,15 @@ jobs:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           $ErrorActionPreference = 'Continue'
-          New-Item -ItemType Directory -Force -Path 'C:	s' | Out-Null
+          New-Item -ItemType Directory -Force -Path 'C:\ts' | Out-Null
           $html = Invoke-WebRequest "https://pkgs.tailscale.com/stable/" -UseBasicParsing
           $tgz = ([regex]::Match($html.Content, 'href="(tailscale_[0-9.]+_amd64\.tgz)"')).Groups[1].Value
           if (-not $tgz) { throw "could not find portable tgz on pkgs.tailscale.com" }
           Write-Host "Downloading $tgz ..."
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:	s	s.tgz" -UseBasicParsing
-          tar -xzf "C:	s	s.tgz" -C "C:	s"
-          $exe = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
-          $tsd  = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/$tgz" -OutFile "C:\ts	s.tgz" -UseBasicParsing
+          tar -xzf "C:\ts	s.tgz" -C "C:\ts"
+          $exe = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
+          $tsd  = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscaled.exe" | Select-Object -First 1).FullName
           if (-not $exe -or -not $tsd) { throw "tailscale binaries missing from archive" }
           Write-Host "Running tailscaled (portable, no MSI)..."
           Start-Process $tsd -WindowStyle Hidden
@@ -197,7 +197,7 @@ jobs:
       - name: 5b. Refresh MagicDNS name
         run: |
           $ErrorActionPreference = 'Continue'
-          $exe = @(Get-ChildItem "C:	s" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
+          $exe = @(Get-ChildItem "C:\ts" -Recurse -Filter "tailscale.exe" | Select-Object -First 1).FullName
           if ($exe) { & $exe set --hostname="nt-server" 2>&1 | Write-Host }
 
       - name: 6. Keep alive ~5h20m, then stage full snapshot for backup
