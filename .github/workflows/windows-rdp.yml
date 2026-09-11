@@ -130,12 +130,18 @@ jobs:
             throw "could not obtain tailscale binaries (see filtered MSI log above)"
           }
           # place wintun.dll next to tailscaled so the driver can load without the installer
-          if ($wint) { Copy-Item $wint (Split-Path $tsd) -Force }
+          if ($wint -and (Split-Path $wint) -ne (Split-Path $tsd)) { Copy-Item $wint (Split-Path $tsd) -Force }
           Write-Host "Running tailscaled manually (no MSI service)..."
           Start-Process $tsd -WindowStyle Hidden
-          Start-Sleep -Seconds 8
-          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server"
-          Start-Sleep -Seconds 8
+          $up = $false
+          foreach ($t in 1..18) {
+            Start-Sleep -Seconds 10
+            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | Write-Host
+            if ($LASTEXITCODE -eq 0) { $up = $true; break }
+            Write-Host "tailscale up attempt $t not ready yet (exit $LASTEXITCODE) - retrying..."
+          }
+          if (-not $up) { throw "tailscale up did not succeed after retries" }
+          Start-Sleep -Seconds 5
           & $exe status 2>&1 | Write-Host
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
