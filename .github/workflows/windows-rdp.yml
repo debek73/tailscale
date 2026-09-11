@@ -192,7 +192,7 @@ jobs:
             Get-Content 'C:\daemon.log' -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { Write-Host "$_" }
             throw "tailscale never got a tailnet IP"
           }
-          Write-Host "  >>> RDP SERVER IS READY!          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
+          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
 
       - name: Keep alive ~5h20m (.stop-signal ends early)
         env:
