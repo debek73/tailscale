@@ -139,32 +139,60 @@ jobs:
           Get-Process -Name 'tailscaled' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Service Tailscale
           Start-Sleep -Seconds 20
-          Write-Host "=== tailscale version ==="
-          & $exe version 2>&1 | ForEach-Object { Write-Host "$_" }
-          Write-Host "=== daemon-logs while calling up (90s) ==="
-          $dl = Start-Process cmd.exe -ArgumentList '/c', "`"$exe`" debug daemon-logs > C:\daemon.log 2>&1" -WindowStyle Hidden -PassThru
+          Write-Host "=== extracted files ==="
+          Get-ChildItem "C:\tsadmin" -Recurse -File | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "=== try installing wintun driver ==="
+          $inf = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "wintun.inf" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if ($inf) {
+            Write-Host "inf: $inf"
+            pnputil /add-driver "$inf" /install 2>&1 | ForEach-Object { Write-Host "$_" }
+          } else {
+            Write-Host "no wintun.inf in extracted MSI (driver embedded in dll only)"
+          }
+          Write-Host "=== attempt 1: service with wintun (default) ==="
+          Stop-Service Tailscale -ErrorAction SilentlyContinue
+          sc.exe delete Tailscale | Out-Null
           Start-Sleep -Seconds 2
-          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
-          Start-Sleep -Seconds 20
-          Stop-Process -Id $dl.Id -Force -ErrorAction SilentlyContinue
-          taskkill /IM tailscale.exe /F 2>&1 | Out-Null
-          Write-Host "=== daemon.log ==="
-          Get-Content 'C:\daemon.log' -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { Write-Host "$_" }
-          Write-Host "=== status --json health ==="
-          (& $exe status --json 2>&1 | Out-String) -replace '\s+', ' ' | ForEach-Object { Write-Host ($_.Substring(0, [Math]::Min(1500, $_.Length))) }
+          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
+          Start-Service Tailscale
+          Start-Sleep -Seconds 15
+          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=60s 2>&1 | ForEach-Object { Write-Host "$_" }
           $connected = $false
-          foreach ($t in 1..16) {
+          foreach ($t in 1..10) {
             Start-Sleep -Seconds 15
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $connected = $true; break }
-            if ($t -eq 8) {
-              Write-Host ">>> retrying login once..."
-              & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=90s 2>&1 | ForEach-Object { Write-Host "$_" }
-            }
           }
-          if (-not $connected) { throw "tailscale never got a tailnet IP" }
-          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
+          if ($connected) { Write-Host ">>> CONNECTED with wintun TUN" }
+          if (-not $connected) {
+            Write-Host "=== attempt 2: service with userspace-networking (no driver needed) ==="
+            Stop-Service Tailscale -ErrorAction SilentlyContinue
+            sc.exe delete Tailscale | Out-Null
+            Start-Sleep -Seconds 2
+            New-Service -Name Tailscale -BinaryPathName "$tsd --tun=userspace-networking" -DisplayName Tailscale -StartupType Automatic
+            Start-Service Tailscale
+            Start-Sleep -Seconds 15
+            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=60s 2>&1 | ForEach-Object { Write-Host "$_" }
+            foreach ($t in 1..10) {
+              Start-Sleep -Seconds 15
+              $st = (& $exe status 2>&1 | Out-String)
+              $st | ForEach-Object { Write-Host "$_" }
+              if ($st -match '100\.') { $connected = $true; break }
+            }
+            if ($connected) { Write-Host ">>> CONNECTED with userspace TUN" }
+          }
+          if (-not $connected) {
+            Write-Host "=== daemon-logs (final 60s capture) ==="
+            $dl = Start-Process cmd.exe -ArgumentList '/c', "`"$exe`" debug daemon-logs > C:\daemon.log 2>&1" -WindowStyle Hidden -PassThru
+            Start-Sleep -Seconds 2
+            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=50s 2>&1 | ForEach-Object { Write-Host "$_" }
+            Start-Sleep -Seconds 15
+            Stop-Process -Id $dl.Id -Force -ErrorAction SilentlyContinue
+            Get-Content 'C:\daemon.log' -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { Write-Host "$_" }
+            throw "tailscale never got a tailnet IP"
+          }
+          Write-Host "  >>> RDP SERVER IS READY!          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
 
       - name: Keep alive ~5h20m (.stop-signal ends early)
         env:
