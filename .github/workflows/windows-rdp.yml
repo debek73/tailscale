@@ -147,7 +147,11 @@ jobs:
           $up = $false
           foreach ($t in 1..10) {
             Start-Sleep -Seconds 15
-            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
+            if ($t -eq 1) {
+              & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --json 2>&1 | Out-String | Write-Host
+            } else {
+              & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
+            }
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $up = $true; break }
@@ -155,7 +159,10 @@ jobs:
           }
           if (-not $up) {
             Write-Host "=== Tailscale service logs (systemprofile) ==="
-            Get-ChildItem "$env:SystemRoot\System32\config\systemprofile\AppData\Local\Tailscale" -Recurse -ErrorAction SilentlyContinue -Include *.log*,*.txt | Sort-Object LastWriteTime -Descending | Select-Object -First 2 | ForEach-Object { Get-Content $_.FullName -Tail 50 | ForEach-Object { Write-Host "$_" } }
+            $logRoot = "$env:SystemRoot\System32\config\systemprofile\AppData\Local\Tailscale"
+            Get-ChildItem $logRoot -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 60 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "$_" } }
+            Write-Host "=== netcheck ==="
+            & $exe debug netcheck 2>&1 | Out-String | Write-Host
             throw "tailscale did not connect after 10 attempts"
           }
           Write-Host ""
