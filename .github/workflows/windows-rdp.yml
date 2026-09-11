@@ -199,6 +199,12 @@ jobs:
           Start-Sleep -Seconds 20
           # ---------- Stage FULL server snapshot (compressed, disk friendly) ----------
           New-Item -ItemType Directory -Force -Path 'C:\persist-store\registry' | Out-Null
+          # Free disk before staging: junk caches + previous local zips
+          # (previous backups remain safe in the GitHub cache itself)
+          foreach ($j in 'C:\Users\runneradmin\AppData\Local\Temp\*','C:\Users\runneradmin\AppData\Local\Microsoft\Windows\INetCache\*','C:\Users\runneradmin\AppData\Local\pip\*','C:\Users\runneradmin\AppData\Local\npm-cache\*','C:\Users\runneradmin\AppData\Local\AzureFunctionsTools','C:\Users\runneradmin\AppData\Local\lm-studio-updater') {
+            Remove-Item $j -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          Remove-Item 'C:\persist-store\profile.zip','C:\persist-store\nt64.zip','C:\persist-store\nt86.zip','C:\persist-store\apps.zip','C:\persist-store\atas.zip' -Force -ErrorAction SilentlyContinue
           $free0 = [math]::Round((Get-PSDrive C).Free/1GB,1)
           Write-Host "Free disk before snapshot: $free0 GB"
           reg export HKCU 'C:\persist-store\registry\HKCU.reg' /y | Out-Null
