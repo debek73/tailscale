@@ -1,20 +1,24 @@
 # Windows Cloud RDP - NinjaTrader (fresh session, no backup)
 name: Windows Cloud RDP - NinjaTrader
 
+
 on:
   workflow_dispatch:
+  # Auto-restart the session every ~6 hours (chain of sessions).
   schedule:
     - cron: '55 */6 * * *'
 
+# اگر یک سشن در جریان باشد، رانِ جدید در صف می‌ماند تا بعد از پایان آن شروع شود.
 concurrency:
   group: nt8-rdp
   cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-latest
     timeout-minutes: 359
     env:
+      # Password lives in repo secrets (never visible in public logs).
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
@@ -102,107 +106,59 @@ jobs:
           New-NetFirewallRule -DisplayName "RDP via Tailscale UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
           Write-Host "RDP enabled - Tailscale-only firewall rules created." -ForegroundColor Green
 
-      - name: 3. Install & connect Tailscale
+      - name: 3. Install & Connect Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          $ErrorActionPreference = 'Continue'
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-1.102.3-amd64.msi" -OutFile "C:\tailscale.msi" -UseBasicParsing
-          $p = Start-Process msiexec -ArgumentList '/a C:\tailscale.msi /qn TARGETDIR=C:\tsadmin' -Wait -PassThru
-          $exe = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          $tsd = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "tailscaled.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          $wint = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "wintun.dll" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if (-not $exe -or -not $tsd) { throw "tailscale binaries missing after admin extract" }
-          if ($wint) { Copy-Item $wint (Split-Path $tsd) -Force -ErrorAction SilentlyContinue }
-          Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
-          Get-Process -Name 'tailscaled','tailscale-ipn' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          # wipe possibly corrupted LocalSystem state so tailscaled boots clean
-          Stop-Service Tailscale -Force -ErrorAction SilentlyContinue
-          Remove-Item "$env:SystemRoot\System32\config\systemprofile\AppData\Local\Tailscale	ailscaled.state" -Force -ErrorAction SilentlyContinue
-          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
-          Start-Service Tailscale
-          Get-Service Tailscale | Out-String | Write-Host
-          # let tailscaled fully initialize before the first login attempt
-          Start-Sleep -Seconds 20
-          # ---- crash diagnostic: run tailscaled in foreground via cmd, capture panic ----
-          Stop-Service Tailscale -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3
-          if (Test-Path 'C:	sd-con.log') { Remove-Item 'C:	sd-con.log' -Force }
-          Start-Process cmd.exe -ArgumentList '/c', "`"$tsd`" > C:	sd-con.log 2>&1" -WindowStyle Hidden
-          Start-Sleep -Seconds 40
-          Write-Host "=== tailscaled foreground log (40s) ==="
-          Get-Content 'C:	sd-con.log' -ErrorAction SilentlyContinue | Select-Object -Last 100 | ForEach-Object { Write-Host "$_" }
-          Write-Host "=== Event Log (Tailscale crashes) ==="
-          Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddMinutes(-10)} -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'Tailscale|tailscaled' } | Select-Object -First 10 | ForEach-Object { Write-Host ("{0} id={1}: {2}" -f $_.TimeCreated, $_.Id, ($_.Message -replace "`r`n"," ")) }
-          if (Test-Path 'C:	sd-con.log') { Write-Host "=== manual log size: $((Get-Item 'C:	sd-con.log').Length) bytes ===" }
-          Get-Process -Name 'tailscaled' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Service Tailscale
-          Start-Sleep -Seconds 20
-          Write-Host "=== extracted files ==="
-          Get-ChildItem "C:\tsadmin" -Recurse -File | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
-          Write-Host "=== try installing wintun driver ==="
-          $inf = @(Get-ChildItem "C:\tsadmin" -Recurse -Filter "wintun.inf" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if ($inf) {
-            Write-Host "inf: $inf"
-            pnputil /add-driver "$inf" /install 2>&1 | ForEach-Object { Write-Host "$_" }
-          } else {
-            Write-Host "no wintun.inf in extracted MSI (driver embedded in dll only)"
+          # pin known-good versions; 1.102.4 "latest" ships a broken silent installer
+          $exe = $null
+          foreach ($v in '1.102.3','1.102.2','1.94.2') {
+            Write-Host ">>> installing Tailscale $v"
+            Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-$v-amd64.msi" -OutFile "C:\tailscale.msi" -UseBasicParsing
+            Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
+            Start-Sleep -Seconds 8
+            $svc = Get-Service -Name Tailscale -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -eq 'Running') {
+              $exe = "C:\Program Files\Tailscale\tailscale.exe"
+              Write-Host ">>> Tailscale $v installed and service running."
+              break
+            }
+            Write-Host ">>> install of $v failed (service: $($svc.Status)); trying next version"
+            Start-Process msiexec -ArgumentList "/x C:\tailscale.msi /quiet /norestart" -Wait -ErrorAction SilentlyContinue
           }
-          Write-Host "=== attempt 1: service with wintun (default) ==="
-          Stop-Service Tailscale -ErrorAction SilentlyContinue
-          sc.exe delete Tailscale | Out-Null
-          Start-Sleep -Seconds 2
-          New-Service -Name Tailscale -BinaryPathName $tsd -DisplayName Tailscale -StartupType Automatic
-          Start-Service Tailscale
-          Start-Sleep -Seconds 15
-          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=60s 2>&1 | ForEach-Object { Write-Host "$_" }
+          if (-not $exe) { throw "no Tailscale version installed successfully" }
+          & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
           $connected = $false
-          foreach ($t in 1..10) {
-            Start-Sleep -Seconds 15
+          foreach ($t in 1..12) {
+            Start-Sleep -Seconds 10
             $st = (& $exe status 2>&1 | Out-String)
             $st | ForEach-Object { Write-Host "$_" }
             if ($st -match '100\.') { $connected = $true; break }
-          }
-          if ($connected) { Write-Host ">>> CONNECTED with wintun TUN" }
-          if (-not $connected) {
-            Write-Host "=== attempt 2: service with userspace-networking (no driver needed) ==="
-            Stop-Service Tailscale -ErrorAction SilentlyContinue
-            sc.exe delete Tailscale | Out-Null
-            Start-Sleep -Seconds 2
-            New-Service -Name Tailscale -BinaryPathName "$tsd --tun=userspace-networking" -DisplayName Tailscale -StartupType Automatic
-            Start-Service Tailscale
-            Start-Sleep -Seconds 15
-            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=60s 2>&1 | ForEach-Object { Write-Host "$_" }
-            foreach ($t in 1..10) {
-              Start-Sleep -Seconds 15
-              $st = (& $exe status 2>&1 | Out-String)
-              $st | ForEach-Object { Write-Host "$_" }
-              if ($st -match '100\.') { $connected = $true; break }
+            if ($t -eq 6) {
+              Write-Host ">>> retrying up once..."
+              & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" 2>&1 | ForEach-Object { Write-Host "$_" }
             }
-            if ($connected) { Write-Host ">>> CONNECTED with userspace TUN" }
           }
-          if (-not $connected) {
-            Write-Host "=== daemon-logs (final 60s capture) ==="
-            $dl = Start-Process cmd.exe -ArgumentList '/c', "`"$exe`" debug daemon-logs > C:\daemon.log 2>&1" -WindowStyle Hidden -PassThru
-            Start-Sleep -Seconds 2
-            & $exe up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="nt-server" --timeout=50s 2>&1 | ForEach-Object { Write-Host "$_" }
-            Start-Sleep -Seconds 15
-            Stop-Process -Id $dl.Id -Force -ErrorAction SilentlyContinue
-            Get-Content 'C:\daemon.log' -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { Write-Host "$_" }
-            throw "tailscale never got a tailnet IP"
-          }
-          Write-Host "  >>> RDP SERVER IS READY! <<<  nt-server.tail9058f3.ts.net  user: runneradmin"
+          if (-not $connected) { throw "tailscale never got a tailnet IP" }
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
+          Write-Host "  Fixed address : nt-server.tail9058f3.ts.net (MagicDNS)" -ForegroundColor Yellow
+          Write-Host "  Username      : runneradmin" -ForegroundColor Yellow
+          Write-Host "  Password      : stored in repo secret RDP_PASSWORD (fixed)" -ForegroundColor Yellow
+          Write-Host "  >> Use your saved RDP shortcut." -ForegroundColor Magenta
+          Write-Host "==================================================" -ForegroundColor Green
 
-      - name: Keep alive ~5h20m (.stop-signal ends early)
+      - name: 5. Keep alive ~5h20m (.stop-signal ends early)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $uri = "https://api.github.com/repos/$Env:GITHUB_REPOSITORY/contents/.stop-signal"
           for ($i = 1; $i -le 320; $i++) {
+            # پایان زودهنگام: اگر فایل .stop-signal در ریپو ساخته شود، سشن حداکثر یک دقیقه بعد سالم تمام می‌شود
             try {
               Invoke-WebRequest -UseBasicParsing -Headers @{ Authorization = "Bearer $Env:GH_TOKEN" } -Uri $uri -ErrorAction Stop | Out-Null
-              Write-Host ">>> .stop-signal detected. Ending session." -ForegroundColor Cyan
+              Write-Host ">>> .stop-signal detected. Ending session early." -ForegroundColor Cyan
               break
             } catch { }
             Start-Sleep -Seconds 60
